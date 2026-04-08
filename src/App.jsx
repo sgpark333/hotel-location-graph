@@ -34,6 +34,9 @@ const TOP_LABEL_OFFSET = 8
 const SHRUNK_POINT_RADIUS = 2.25
 const LABEL_FONT_SIZE = 8.5
 const DENSE_LABEL_FONT_SIZE = 8
+const LEADER_LABEL_INSET_X = 5
+const LEADER_LABEL_INSET_Y = 3
+const LEADER_ELBOW_GAP = 6
 const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
 const MAX_LABEL_FREE_DISTANCE = 20
@@ -340,23 +343,29 @@ function boxOverlapsGuideLines(box, guideLines) {
 }
 
 function getRectAnchor(point, box) {
-  const centerX = box.x + box.width / 2
-  const centerY = box.y + box.height / 2
+  const targetBox = {
+    x: box.x + LEADER_LABEL_INSET_X,
+    y: box.y + LEADER_LABEL_INSET_Y,
+    width: Math.max(box.width - LEADER_LABEL_INSET_X * 2, 1),
+    height: Math.max(box.height - LEADER_LABEL_INSET_Y * 2, 1),
+  }
+  const centerX = targetBox.x + targetBox.width / 2
+  const centerY = targetBox.y + targetBox.height / 2
   const dx = point.x - centerX
   const dy = point.y - centerY
   const absX = Math.abs(dx)
   const absY = Math.abs(dy)
 
-  if (absX / box.width > absY / box.height) {
+  if (absX / targetBox.width > absY / targetBox.height) {
     return {
-      x: dx < 0 ? box.x : box.x + box.width,
-      y: clamp(point.y, box.y + 4, box.y + box.height - 4),
+      x: dx < 0 ? targetBox.x : targetBox.x + targetBox.width,
+      y: clamp(point.y, targetBox.y + 2, targetBox.y + targetBox.height - 2),
     }
   }
 
   return {
-    x: clamp(point.x, box.x + 4, box.x + box.width - 4),
-    y: dy < 0 ? box.y : box.y + box.height,
+    x: clamp(point.x, targetBox.x + 2, targetBox.x + targetBox.width - 2),
+    y: dy < 0 ? targetBox.y : targetBox.y + targetBox.height,
   }
 }
 
@@ -371,8 +380,8 @@ function buildLeaderLine(point, radius, boxAnchor) {
     y: point.y,
   }
   const elbow = Math.abs(dx) > Math.abs(dy)
-    ? { x: boxAnchor.x - unitX * 10, y: start.y }
-    : { x: start.x, y: boxAnchor.y - unitY * 10 }
+    ? { x: boxAnchor.x - unitX * LEADER_ELBOW_GAP, y: start.y }
+    : { x: start.x, y: boxAnchor.y - unitY * LEADER_ELBOW_GAP }
 
   return { start, elbow, end: boxAnchor }
 }
