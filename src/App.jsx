@@ -42,6 +42,7 @@ const LABEL_MIN_GAP_Y = 6
 const MAX_LABEL_FREE_DISTANCE = 20
 const LEADER_REQUIRED_DISTANCE = 3
 const LABEL_STORAGE_KEY = 'quadrant-graph-label-offsets'
+const DEFAULT_LABEL_STORAGE_KEY = 'quadrant-graph-default-label-offsets'
 const DEFAULT_COLORS = [
   '#264653',
   '#2a9d8f',
@@ -64,6 +65,52 @@ const EMPTY_ARROW_FORM = {
   toId: '',
 }
 
+const DEFAULT_POINT_ROWS = [
+  ['반얀트리', -5.79, 35.42],
+  ['포레스타 불광', -4.4, 15.05],
+  ['페어필드', -5.51, 19.14],
+  ['AC메리어트', -5.55, 19.29],
+  ['소노캄 고양', -3.72, 23.44],
+  ['토요코인 강남', -4.95, 26.25],
+  ['토요코인 동대문', -4.98, 28],
+  ['포포인츠', -5.75, 14.41],
+  ['로카우스', -3.51, 20.49],
+  ['더윈', -2.74, 12.25],
+  ['클라움', -4.2, 10.85],
+  ['라마다 남대문', -2.16, 6.65],
+  ['밀레니엄', -3.92, 10.5],
+  ['인나인', -2.6, 15.1],
+  ['베이튼', -2.79, 7],
+  ['블루오션', -1.58, 11.2],
+  ['아비숑', -2.32, 10.5],
+  ['오클라우드', -1.59, 12.25],
+  ['홀리데이 인 홍대', -2.63, 11.55],
+  ['그랜드 인터컨티넨탈', -2.1, 34.75],
+  ['오크우드', -1.54, 13.37],
+  ['워커힐', -2.02, 29.88],
+  ['테이크', -3.49, 27.74],
+  ['G1', -1.09, 10.15],
+  ['G2', -2.17, 10.15],
+  ['G3', -2.26, 15.05],
+  ['밀리오레', -3.76, 19.25],
+  ['에이든', -1.29, 10.46],
+  ['페이토 강남', -2.11, 16.88],
+  ['베르누이', -2.65, 9.81],
+  ['안토', -0.22, 21.82],
+  ['페이토 삼성', -1.92, 7.38],
+  ['임피리얼 강남', 0.28, 27.73],
+  ['아난티 앳 강남', -0.79, 21.62],
+  ['보코', 1.33, 18.64],
+  ['호텔 스타', 1.58, 13.3],
+  ['호텔 스테이', 1.78, 13.3],
+  ['드립앤드롭', 2.52, 16.15],
+  ['에어스카이', 2.51, 10.5],
+  ['인더시티 남산', 3.31, 14],
+  ['인더시티 명동', 3.27, 14],
+  ['더 플라자', 5.41, 20.38],
+  ['서교타운', 7, 9.1],
+]
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max)
 }
@@ -78,11 +125,11 @@ function createPoint(name, x, y, color) {
   }
 }
 
-const INITIAL_POINTS = [
-  createPoint('Alpha', -4.8, 14, DEFAULT_COLORS[0]),
-  createPoint('Bravo', 3.4, 25, DEFAULT_COLORS[1]),
-  createPoint('Charlie', 5.6, 10, DEFAULT_COLORS[2]),
-]
+function createDefaultPoints() {
+  return DEFAULT_POINT_ROWS.map(([name, x, y], index) =>
+    createPoint(name, x, y, DEFAULT_COLORS[index % DEFAULT_COLORS.length]),
+  )
+}
 
 function wrapLabelText(value) {
   const text = String(value ?? '').trim()
@@ -780,7 +827,7 @@ function App() {
   const chartSizeRef = useRef({ width: 0, height: 0 })
   const dragStateRef = useRef(null)
   const activeLabelRef = useRef(null)
-  const [points, setPoints] = useState(INITIAL_POINTS)
+  const [points, setPoints] = useState(createDefaultPoints)
   const [connections, setConnections] = useState([])
   const [form, setForm] = useState(EMPTY_FORM)
   const [arrowForm, setArrowForm] = useState(EMPTY_ARROW_FORM)
@@ -789,17 +836,19 @@ function App() {
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
   const [labelOffsets, setLabelOffsets] = useState({})
+  const [defaultLabelOffsets, setDefaultLabelOffsets] = useState({})
   const [dragState, setDragState] = useState(null)
   const [activeLabelId, setActiveLabelId] = useState(null)
   const [debugLabelEvent, setDebugLabelEvent] = useState('idle')
 
   useEffect(() => {
     try {
+      const storedDefaults = window.localStorage.getItem(DEFAULT_LABEL_STORAGE_KEY)
+      const parsedDefaults = storedDefaults ? JSON.parse(storedDefaults) : {}
       const stored = window.localStorage.getItem(LABEL_STORAGE_KEY)
 
-      if (stored) {
-        setLabelOffsets(JSON.parse(stored))
-      }
+      setDefaultLabelOffsets(parsedDefaults)
+      setLabelOffsets(stored ? JSON.parse(stored) : parsedDefaults)
     } catch {
       // Ignore local storage issues.
     }
@@ -812,6 +861,14 @@ function App() {
       // Ignore local storage issues.
     }
   }, [labelOffsets])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(DEFAULT_LABEL_STORAGE_KEY, JSON.stringify(defaultLabelOffsets))
+    } catch {
+      // Ignore local storage issues.
+    }
+  }, [defaultLabelOffsets])
 
   useEffect(() => {
     if (!chartWrapRef.current) {
@@ -863,6 +920,14 @@ function App() {
 
   useEffect(() => {
     setLabelOffsets((current) => {
+      const validIds = new Set(points.map((point) => point.id))
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([id]) => validIds.has(id)),
+      )
+
+      return Object.keys(next).length === Object.keys(current).length ? current : next
+    })
+    setDefaultLabelOffsets((current) => {
       const validIds = new Set(points.map((point) => point.id))
       const next = Object.fromEntries(
         Object.entries(current).filter(([id]) => validIds.has(id)),
@@ -1065,7 +1130,12 @@ function App() {
   const handleResetAllLabels = () => {
     activeLabelRef.current = null
     setActiveLabelId(null)
-    setLabelOffsets({})
+    setLabelOffsets(defaultLabelOffsets)
+  }
+
+  const handleSaveCurrentLabelsAsDefault = () => {
+    setDefaultLabelOffsets(labelOffsets)
+    setErrorMessage('현재 라벨 위치를 기본값으로 저장했습니다.')
   }
 
   const handleChange = (event) => {
@@ -1108,6 +1178,19 @@ function App() {
 
   const handleDeletePoint = (id) => {
     setPoints((current) => current.filter((point) => point.id !== id))
+  }
+
+  const handleResetDefaultPoints = () => {
+    activeLabelRef.current = null
+    dragStateRef.current = null
+    setPoints(createDefaultPoints())
+    setConnections([])
+    setArrowForm(EMPTY_ARROW_FORM)
+    setLabelOffsets(defaultLabelOffsets)
+    setActiveLabelId(null)
+    setDragState(null)
+    setErrorMessage('')
+    setDebugLabelEvent('defaults-restored')
   }
 
   const handlePointColorChange = (id, color) => {
@@ -1433,6 +1516,12 @@ function App() {
             <button type="submit">점 추가</button>
             <button type="button" className="secondary-button" onClick={handleDownload}>
               그래프 이미지 다운로드
+            </button>
+            <button type="button" className="secondary-button" onClick={handleResetDefaultPoints}>
+              초기 데이터 복원
+            </button>
+            <button type="button" className="secondary-button" onClick={handleSaveCurrentLabelsAsDefault}>
+              현재 라벨 위치 기본값 저장
             </button>
             <button type="button" className="secondary-button" onClick={handleResetAllLabels}>
               라벨 위치 초기화
