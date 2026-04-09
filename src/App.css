@@ -107,15 +107,24 @@
 
 .sidebar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  align-items: start;
+  row-gap: 6px;
   width: 100%;
   margin-top: 2px;
 }
 
+.sidebar-top {
+  display: grid;
+  grid-template-columns: 1.1fr 1.05fr 0.95fr;
+  column-gap: 12px;
+  align-items: stretch;
+  height: 550px;
+  min-height: 550px;
+  max-height: 550px;
+}
+
 .entry-form,
 .arrow-form-card,
+.saved-graph-panel,
 .point-list,
 .arrow-list {
   background: #fff;
@@ -126,8 +135,56 @@
 .entry-form,
 .arrow-form {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
+}
+
+.entry-form,
+.arrow-form-card,
+.saved-graph-panel,
+.point-list,
+.arrow-list {
+  min-width: 0;
+}
+
+.entry-form {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  align-content: start;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.right-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.arrow-form-card,
+.saved-graph-panel {
+  min-width: 0;
+}
+
+.point-list {
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  align-self: stretch;
+}
+
+.arrow-list {
+  max-height: 220px;
+  overflow: auto;
 }
 
 .entry-form label,
@@ -140,11 +197,12 @@
 }
 
 .entry-form input,
+.arrow-form input,
 .arrow-form select,
 .file-field input {
   border: 1px solid #d7dde3;
   border-radius: 8px;
-  padding: 9px 10px;
+  padding: 8px 9px;
   font: inherit;
   color: #14213d;
   background: #fff;
@@ -154,7 +212,7 @@
 .secondary-button {
   border: 0;
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -204,12 +262,77 @@
 .arrow-list {
   padding: 8px;
   min-height: 0;
-  max-height: 280px;
-  overflow: auto;
+}
+
+.saved-graph-panel {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.point-list {
+  min-height: 0;
+  max-height: none;
+}
+
+.saved-graph-form {
+  display: grid;
+  gap: 8px;
+}
+
+.saved-graph-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #14213d;
+}
+
+.saved-graph-form input,
+.saved-graph-name {
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  padding: 8px 9px;
+  font: inherit;
+  color: #14213d;
+  background: #fff;
+}
+
+.point-list-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.point-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #14213d;
+}
+
+.point-sort-select {
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  color: #14213d;
+  background: #fff;
 }
 
 .point-list ul,
-.arrow-list ul {
+.arrow-list ul,
+.saved-graph-list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -218,16 +341,17 @@
 }
 
 .point-list li,
-.arrow-list li {
+.arrow-list li,
+.saved-graph-list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 7px 8px;
   border-radius: 8px;
   background: #fff;
   border: 1px solid #eef1f4;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 .point-meta {
@@ -251,6 +375,20 @@
   flex-shrink: 0;
 }
 
+.point-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  color: #14213d;
+}
+
+.point-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
 .color-picker {
   width: 34px;
   height: 28px;
@@ -266,15 +404,30 @@
   background: #fff;
   color: #52616b;
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 5px 7px;
   font-size: 0.75rem;
   cursor: pointer;
   flex-shrink: 0;
 }
 
+.saved-graph-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #14213d;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.saved-graph-name {
+  flex: 1;
+  min-width: 0;
+}
+
 @media (max-width: 960px) {
-  .sidebar {
-    grid-template-columns: 1fr;
+  .sidebar-top {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 10px;
   }
 }
 
@@ -287,5 +440,9 @@
   .chart-panel {
     padding: 4px;
     max-height: none;
+  }
+
+  .sidebar-top {
+    grid-template-columns: 1fr;
   }
 }

@@ -41,8 +41,8 @@ const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
 const MAX_LABEL_FREE_DISTANCE = 20
 const LEADER_REQUIRED_DISTANCE = 3
-const LABEL_STORAGE_KEY = 'quadrant-graph-label-offsets'
-const DEFAULT_LABEL_STORAGE_KEY = 'quadrant-graph-default-label-offsets'
+const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state'
+const SAVED_GRAPHS_KEY = 'quadrant-graph-saved-states'
 const DEFAULT_COLORS = [
   '#264653',
   '#2a9d8f',
@@ -63,6 +63,13 @@ const EMPTY_FORM = {
 const EMPTY_ARROW_FORM = {
   fromId: '',
   toId: '',
+}
+
+const SORT_OPTIONS = {
+  nameAsc: 'nameAsc',
+  nameDesc: 'nameDesc',
+  quadrantAsc: 'quadrantAsc',
+  quadrantDesc: 'quadrantDesc',
 }
 
 const DEFAULT_POINT_ROWS = [
@@ -129,6 +136,117 @@ function createDefaultPoints() {
   return DEFAULT_POINT_ROWS.map(([name, x, y], index) =>
     createPoint(name, x, y, DEFAULT_COLORS[index % DEFAULT_COLORS.length]),
   )
+}
+
+function createDefaultGraphState() {
+  return {
+    points: createDefaultPoints(),
+    connections: [],
+    labelOffsets: {},
+    showSecondaryQuadrants: false,
+  }
+}
+
+function cloneGraphState(state) {
+  return JSON.parse(JSON.stringify(state))
+}
+
+function normalizeGraphState(state) {
+  const fallback = createDefaultGraphState()
+
+  if (!state || typeof state !== 'object') {
+    return fallback
+  }
+
+  const points = Array.isArray(state.points)
+    ? state.points
+        .map((point, index) => {
+          const name = String(point?.name ?? '').trim()
+          const x = Number(point?.x)
+          const y = Number(point?.y)
+
+          if (!name || Number.isNaN(x) || Number.isNaN(y)) {
+            return null
+          }
+
+          return {
+            id: point?.id || crypto.randomUUID(),
+            name,
+            x,
+            y,
+            color: point?.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length],
+          }
+        })
+        .filter(Boolean)
+    : fallback.points
+
+  const pointIds = new Set(points.map((point) => point.id))
+
+  return {
+    points,
+    connections: Array.isArray(state.connections)
+      ? state.connections.filter(
+          (connection) =>
+            connection?.id &&
+            pointIds.has(connection.fromId) &&
+            pointIds.has(connection.toId),
+        )
+      : [],
+    labelOffsets:
+      state.labelOffsets && typeof state.labelOffsets === 'object'
+        ? Object.fromEntries(
+            Object.entries(state.labelOffsets).filter(([id, offset]) =>
+              pointIds.has(id) &&
+              offset &&
+              Number.isFinite(Number(offset.x)) &&
+              Number.isFinite(Number(offset.y)),
+            ).map(([id, offset]) => [id, { x: Number(offset.x), y: Number(offset.y) }]),
+          )
+        : {},
+    showSecondaryQuadrants: Boolean(state.showSecondaryQuadrants),
+  }
+}
+
+function readStorageJson(key, fallback) {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+
+  try {
+    const stored = window.localStorage.getItem(key)
+    return stored ? JSON.parse(stored) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function getInitialGraphState() {
+  return normalizeGraphState(readStorageJson(DEFAULT_GRAPH_STATE_KEY, null))
+}
+
+function getInitialSavedGraphs() {
+  const saved = readStorageJson(SAVED_GRAPHS_KEY, [])
+
+  if (!Array.isArray(saved)) {
+    return []
+  }
+
+  return saved
+    .map((item, index) => {
+      const name = String(item?.name ?? '').trim()
+
+      if (!item?.id || !name) {
+        return null
+      }
+
+      return {
+        id: item.id,
+        name,
+        state: normalizeGraphState(item.state),
+        createdAt: item.createdAt || Date.now() + index,
+      }
+    })
+    .filter(Boolean)
 }
 
 function wrapLabelText(value) {
@@ -459,6 +577,67 @@ function getQuadrant(point) {
   }
 
   return 4
+}
+
+function getPrimaryQuadrantLabel(point) {
+  return `${getQuadrant(point)}사분면`
+}
+
+function getSecondaryQuadrantLabel(point) {
+  const primaryQuadrant = getQuadrant(point)
+  const secondaryQuadrant = getSecondaryQuadrantNumber(point)
+
+  return `${primaryQuadrant}-${secondaryQuadrant} 사분면`
+}
+
+function getSecondaryQuadrantNumber(point) {
+  const primaryQuadrant = getQuadrant(point)
+
+  const horizontalIndex = point.x < 0
+    ? point.x < -3.5 ? 1 : 2
+    : point.x < 3.5 ? 1 : 2
+
+  const verticalIndex = point.y < 18
+    ? point.y < 9 ? 2 : 1
+    : point.y < 27 ? 2 : 1
+
+  const secondaryIndexByQuadrant = {
+    1: {
+      '1-1': 1,
+      '2-1': 2,
+      '1-2': 3,
+      '2-2': 4,
+    },
+    2: {
+      '1-1': 2,
+      '2-1': 1,
+      '1-2': 4,
+      '2-2': 3,
+    },
+    3: {
+      '1-1': 3,
+      '2-1': 4,
+      '1-2': 1,
+      '2-2': 2,
+    },
+    4: {
+      '1-1': 4,
+      '2-1': 3,
+      '1-2': 2,
+      '2-2': 1,
+    },
+  }
+
+  const secondaryIndex =
+    secondaryIndexByQuadrant[primaryQuadrant][`${horizontalIndex}-${verticalIndex}`]
+
+  return secondaryIndex
+}
+
+function getPointLocationLabel(point, showSecondaryQuadrants) {
+  return showSecondaryQuadrants
+    ? `위치 : ${getSecondaryQuadrantLabel(point)}`
+    : `위치 : ${getPrimaryQuadrantLabel(point)}`
 }
 
 function getDenseNeighborCount(point, pointScreenMap, points) {
@@ -822,53 +1001,74 @@ function PointShape(props) {
 }
 
 function App() {
+  const initialGraphStateRef = useRef(null)
+  const initialSavedGraphsRef = useRef(null)
+
+  if (!initialGraphStateRef.current) {
+    initialGraphStateRef.current = getInitialGraphState()
+  }
+
+  if (!initialSavedGraphsRef.current) {
+    initialSavedGraphsRef.current = getInitialSavedGraphs()
+  }
+
   const chartRef = useRef(null)
   const chartWrapRef = useRef(null)
+  const entryFormRef = useRef(null)
   const chartSizeRef = useRef({ width: 0, height: 0 })
   const dragStateRef = useRef(null)
   const activeLabelRef = useRef(null)
-  const [points, setPoints] = useState(createDefaultPoints)
-  const [connections, setConnections] = useState([])
+  const [points, setPoints] = useState(() => initialGraphStateRef.current.points)
+  const [connections, setConnections] = useState(() => initialGraphStateRef.current.connections)
   const [form, setForm] = useState(EMPTY_FORM)
   const [arrowForm, setArrowForm] = useState(EMPTY_ARROW_FORM)
-  const [showSecondaryQuadrants, setShowSecondaryQuadrants] = useState(false)
+  const [showSecondaryQuadrants, setShowSecondaryQuadrants] = useState(
+    () => initialGraphStateRef.current.showSecondaryQuadrants,
+  )
   const [errorMessage, setErrorMessage] = useState('')
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
-  const [labelOffsets, setLabelOffsets] = useState({})
-  const [defaultLabelOffsets, setDefaultLabelOffsets] = useState({})
+  const [labelOffsets, setLabelOffsets] = useState(() => initialGraphStateRef.current.labelOffsets)
+  const [savedGraphs, setSavedGraphs] = useState(() => initialSavedGraphsRef.current)
+  const [savedGraphName, setSavedGraphName] = useState('')
+  const [activeSavedGraphId, setActiveSavedGraphId] = useState(null)
   const [dragState, setDragState] = useState(null)
   const [activeLabelId, setActiveLabelId] = useState(null)
   const [debugLabelEvent, setDebugLabelEvent] = useState('idle')
+  const [topPanelHeight, setTopPanelHeight] = useState(0)
+  const [pointSortOrder, setPointSortOrder] = useState(SORT_OPTIONS.asc)
 
   useEffect(() => {
     try {
-      const storedDefaults = window.localStorage.getItem(DEFAULT_LABEL_STORAGE_KEY)
-      const parsedDefaults = storedDefaults ? JSON.parse(storedDefaults) : {}
-      const stored = window.localStorage.getItem(LABEL_STORAGE_KEY)
-
-      setDefaultLabelOffsets(parsedDefaults)
-      setLabelOffsets(stored ? JSON.parse(stored) : parsedDefaults)
+      window.localStorage.setItem(SAVED_GRAPHS_KEY, JSON.stringify(savedGraphs))
     } catch {
       // Ignore local storage issues.
     }
-  }, [])
+  }, [savedGraphs])
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(LABEL_STORAGE_KEY, JSON.stringify(labelOffsets))
-    } catch {
-      // Ignore local storage issues.
-    }
-  }, [labelOffsets])
+    const node = entryFormRef.current
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(DEFAULT_LABEL_STORAGE_KEY, JSON.stringify(defaultLabelOffsets))
-    } catch {
-      // Ignore local storage issues.
+    if (!node || typeof ResizeObserver === 'undefined') {
+      return undefined
     }
-  }, [defaultLabelOffsets])
+
+    const updateHeight = () => {
+      setTopPanelHeight(node.getBoundingClientRect().height)
+    }
+
+    updateHeight()
+
+    const observer = new ResizeObserver(() => {
+      updateHeight()
+    })
+
+    observer.observe(node)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [points.length, savedGraphs.length, showSecondaryQuadrants, errorMessage, debugLabelEvent])
 
   useEffect(() => {
     if (!chartWrapRef.current) {
@@ -927,14 +1127,6 @@ function App() {
 
       return Object.keys(next).length === Object.keys(current).length ? current : next
     })
-    setDefaultLabelOffsets((current) => {
-      const validIds = new Set(points.map((point) => point.id))
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([id]) => validIds.has(id)),
-      )
-
-      return Object.keys(next).length === Object.keys(current).length ? current : next
-    })
   }, [points])
 
   const pointScreenMap = useMemo(
@@ -969,6 +1161,33 @@ function App() {
     [points, pointScreenMap],
   )
 
+  const sortedPoints = useMemo(() => {
+    const collator = new Intl.Collator('ko')
+    const sorted = [...points]
+
+    if (pointSortOrder === SORT_OPTIONS.nameAsc || pointSortOrder === SORT_OPTIONS.nameDesc) {
+      const direction = pointSortOrder === SORT_OPTIONS.nameDesc ? -1 : 1
+      return sorted.sort((left, right) => direction * collator.compare(left.name, right.name))
+    }
+
+    return sorted.sort((left, right) => {
+      const leftPrimary = getQuadrant(left)
+      const rightPrimary = getQuadrant(right)
+      const leftSecondary = getSecondaryQuadrantNumber(left)
+      const rightSecondary = getSecondaryQuadrantNumber(right)
+      const leftKey = showSecondaryQuadrants ? leftPrimary * 10 + leftSecondary : leftPrimary
+      const rightKey = showSecondaryQuadrants ? rightPrimary * 10 + rightSecondary : rightPrimary
+
+      if (leftKey !== rightKey) {
+        return pointSortOrder === SORT_OPTIONS.quadrantDesc
+          ? rightKey - leftKey
+          : leftKey - rightKey
+      }
+
+      return collator.compare(left.name, right.name)
+    })
+  }, [pointSortOrder, points, showSecondaryQuadrants])
+
   const labelLayouts = useMemo(
     () => buildLabelLayouts(points, pointScreenMap, pointRadiusMap, labelOffsets),
     [points, pointScreenMap, pointRadiusMap, labelOffsets],
@@ -978,6 +1197,31 @@ function App() {
     () => buildArrowLayouts(connections, pointScreenMap),
     [connections, pointScreenMap],
   )
+
+  const getCurrentGraphState = () =>
+    cloneGraphState({
+      points,
+      connections,
+      labelOffsets,
+      showSecondaryQuadrants,
+    })
+
+  const applyGraphState = (graphState, options = {}) => {
+    const normalized = normalizeGraphState(graphState)
+
+    activeLabelRef.current = null
+    dragStateRef.current = null
+    setPoints(normalized.points)
+    setConnections(normalized.connections)
+    setLabelOffsets(normalized.labelOffsets)
+    setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
+    setArrowForm(EMPTY_ARROW_FORM)
+    setActiveLabelId(null)
+    setDragState(null)
+    setActiveSavedGraphId(options.activeSavedGraphId ?? null)
+    setErrorMessage(options.message ?? '')
+    setDebugLabelEvent(options.debugLabel ?? 'graph-state-loaded')
+  }
 
   const handlePointRender = (id, x, y) => {
     setRenderedPointMap((current) => {
@@ -1079,6 +1323,7 @@ function App() {
     }
 
     setDebugLabelEvent(`dragging:${currentDragState.pointId}`)
+    setActiveSavedGraphId(null)
     setLabelOffsets((current) => ({
       ...current,
       [currentDragState.pointId]: {
@@ -1127,15 +1372,58 @@ function App() {
     })
   }
 
-  const handleResetAllLabels = () => {
-    activeLabelRef.current = null
-    setActiveLabelId(null)
-    setLabelOffsets(defaultLabelOffsets)
+  const handleSaveCurrentAsDefault = () => {
+    try {
+      window.localStorage.setItem(DEFAULT_GRAPH_STATE_KEY, JSON.stringify(getCurrentGraphState()))
+      setErrorMessage('현재 그래프 상태를 기본값으로 저장했습니다.')
+    } catch {
+      setErrorMessage('기본값 저장에 실패했습니다.')
+    }
   }
 
-  const handleSaveCurrentLabelsAsDefault = () => {
-    setDefaultLabelOffsets(labelOffsets)
-    setErrorMessage('현재 라벨 위치를 기본값으로 저장했습니다.')
+  const handleSaveGraphPreset = () => {
+    const trimmedName = savedGraphName.trim()
+    const nextPreset = {
+      id: crypto.randomUUID(),
+      name: trimmedName || `저장본 ${savedGraphs.length + 1}`,
+      state: getCurrentGraphState(),
+      createdAt: Date.now(),
+    }
+
+    setSavedGraphs((current) => [nextPreset, ...current])
+    setSavedGraphName('')
+    setErrorMessage('현재 그래프를 저장 목록에 추가했습니다.')
+  }
+
+  const handleSavedGraphToggle = (id, checked) => {
+    if (!checked) {
+      setActiveSavedGraphId(null)
+      return
+    }
+
+    const target = savedGraphs.find((item) => item.id === id)
+
+    if (!target) {
+      return
+    }
+
+    applyGraphState(target.state, {
+      activeSavedGraphId: id,
+      message: `${target.name} 불러옴`,
+      debugLabel: 'saved-graph-loaded',
+    })
+  }
+
+  const handleSavedGraphRename = (id, name) => {
+    setSavedGraphs((current) =>
+      current.map((item) => (item.id === id ? { ...item, name } : item)),
+    )
+  }
+
+  const handleSavedGraphDelete = (id) => {
+    setSavedGraphs((current) => current.filter((item) => item.id !== id))
+    setActiveSavedGraphId((current) => (current === id ? null : current))
+    setErrorMessage('저장된 그래프를 삭제했습니다.')
   }
 
   const handleChange = (event) => {
@@ -1156,6 +1444,23 @@ function App() {
     }))
   }
 
+  const handleArrowPointToggle = (type, pointId, checked) => {
+    setActiveSavedGraphId(null)
+    setArrowForm((current) => {
+      if (type === 'fromId') {
+        return {
+          ...current,
+          fromId: checked ? pointId : current.fromId === pointId ? '' : current.fromId,
+        }
+      }
+
+      return {
+        ...current,
+        toId: checked ? pointId : current.toId === pointId ? '' : current.toId,
+      }
+    })
+  }
+
   const handleSubmit = (event) => {
     event.preventDefault()
 
@@ -1171,29 +1476,19 @@ function App() {
       return
     }
 
+    setActiveSavedGraphId(null)
     setPoints((current) => [...current, nextPoint])
     setForm(EMPTY_FORM)
     setErrorMessage('')
   }
 
   const handleDeletePoint = (id) => {
+    setActiveSavedGraphId(null)
     setPoints((current) => current.filter((point) => point.id !== id))
   }
 
-  const handleResetDefaultPoints = () => {
-    activeLabelRef.current = null
-    dragStateRef.current = null
-    setPoints(createDefaultPoints())
-    setConnections([])
-    setArrowForm(EMPTY_ARROW_FORM)
-    setLabelOffsets(defaultLabelOffsets)
-    setActiveLabelId(null)
-    setDragState(null)
-    setErrorMessage('')
-    setDebugLabelEvent('defaults-restored')
-  }
-
   const handlePointColorChange = (id, color) => {
+    setActiveSavedGraphId(null)
     setPoints((current) =>
       current.map((point) => (point.id === id ? { ...point, color } : point)),
     )
@@ -1217,6 +1512,19 @@ function App() {
       return
     }
 
+    const fromPoint = points.find((point) => point.id === arrowForm.fromId)
+
+    if (!fromPoint) {
+      setErrorMessage('시작점 정보를 찾을 수 없습니다.')
+      return
+    }
+
+    setActiveSavedGraphId(null)
+    setPoints((current) =>
+      current.map((point) =>
+        point.id === arrowForm.toId ? { ...point, color: fromPoint.color } : point,
+      ),
+    )
     setConnections((current) => [
       ...current,
       {
@@ -1231,6 +1539,7 @@ function App() {
   }
 
   const handleDeleteArrow = (id) => {
+    setActiveSavedGraphId(null)
     setConnections((current) => current.filter((connection) => connection.id !== id))
   }
 
@@ -1300,6 +1609,7 @@ function App() {
         throw new Error('no-valid-rows')
       }
 
+      setActiveSavedGraphId(null)
       setPoints(nextPoints)
       setErrorMessage('')
     } catch {
@@ -1359,8 +1669,8 @@ function App() {
                       key={`x-${value}`}
                       x={value}
                       stroke="#b8c0c7"
-                      strokeOpacity={0.42}
-                      strokeDasharray="12 10"
+                      strokeOpacity={0.95}
+                      strokeDasharray="8 6"
                       strokeWidth={1}
                     />
                   ))}
@@ -1370,8 +1680,8 @@ function App() {
                       key={`y-${value}`}
                       y={value}
                       stroke="#b8c0c7"
-                      strokeOpacity={0.42}
-                      strokeDasharray="12 10"
+                      strokeOpacity={0.95}
+                      strokeDasharray="8 6"
                       strokeWidth={1}
                     />
                   ))}
@@ -1469,152 +1779,227 @@ function App() {
         </div>
 
         <aside className="sidebar">
-          <form className="entry-form" onSubmit={handleSubmit}>
-            <label>
-              호텔명
-              <input
-                name="name"
-                value={form.name}
-                onChange={handleChange}
-                placeholder="예: Delta Hotel"
-              />
-            </label>
-
-            <label>
-              단가 점수
-              <input
-                name="x"
-                type="number"
-                step="any"
-                value={form.x}
-                onChange={handleChange}
-                placeholder="0"
-              />
-            </label>
-
-            <label>
-              운영 난이도
-              <input
-                name="y"
-                type="number"
-                step="any"
-                value={form.y}
-                onChange={handleChange}
-                placeholder="18"
-              />
-            </label>
-
-            <label className="toggle-field">
-              <input
-                type="checkbox"
-                checked={showSecondaryQuadrants}
-                onChange={(event) => setShowSecondaryQuadrants(event.target.checked)}
-              />
-              <span>2차 사분면 표시</span>
-            </label>
-
-            <button type="submit">점 추가</button>
-            <button type="button" className="secondary-button" onClick={handleDownload}>
-              그래프 이미지 다운로드
-            </button>
-            <button type="button" className="secondary-button" onClick={handleResetDefaultPoints}>
-              초기 데이터 복원
-            </button>
-            <button type="button" className="secondary-button" onClick={handleSaveCurrentLabelsAsDefault}>
-              현재 라벨 위치 기본값 저장
-            </button>
-            <button type="button" className="secondary-button" onClick={handleResetAllLabels}>
-              라벨 위치 초기화
-            </button>
-            <label className="file-field">
-              <span>엑셀 업로드</span>
-              <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} />
-            </label>
-            {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
-            <p className="error-text">label-debug: {debugLabelEvent}</p>
-          </form>
-
-          <section className="arrow-form-card">
-            <form className="arrow-form" onSubmit={handleAddArrow}>
+          <div className="sidebar-top">
+            <form className="entry-form" onSubmit={handleSubmit} ref={entryFormRef}>
               <label>
-                시작점
-                <select name="fromId" value={arrowForm.fromId} onChange={handleArrowFormChange}>
-                  <option value="">선택</option>
-                  {points.map((point) => (
-                    <option key={`from-${point.id}`} value={point.id}>
-                      {point.name}
-                    </option>
-                  ))}
-                </select>
+                호텔명
+                <input
+                  name="name"
+                  value={form.name}
+                  onChange={handleChange}
+                  placeholder="예: Delta Hotel"
+                />
               </label>
 
               <label>
-                끝점
-                <select name="toId" value={arrowForm.toId} onChange={handleArrowFormChange}>
-                  <option value="">선택</option>
-                  {points.map((point) => (
-                    <option key={`to-${point.id}`} value={point.id}>
-                      {point.name}
-                    </option>
-                  ))}
-                </select>
+                단가 점수
+                <input
+                  name="x"
+                  type="number"
+                  step="any"
+                  value={form.x}
+                  onChange={handleChange}
+                  placeholder="0"
+                />
               </label>
 
-              <button type="submit" className="secondary-button">
-                화살표 추가
+              <label>
+                운영 난이도
+                <input
+                  name="y"
+                  type="number"
+                  step="any"
+                  value={form.y}
+                  onChange={handleChange}
+                  placeholder="18"
+                />
+              </label>
+
+              <label className="toggle-field">
+                <input
+                  type="checkbox"
+                  checked={showSecondaryQuadrants}
+                  onChange={(event) => {
+                    setActiveSavedGraphId(null)
+                    setShowSecondaryQuadrants(event.target.checked)
+                  }}
+                />
+                <span>2차 사분면 표시</span>
+              </label>
+
+              <button type="submit">점 추가</button>
+              <button type="button" className="secondary-button" onClick={handleDownload}>
+                그래프 이미지 다운로드
               </button>
+              <button type="button" className="secondary-button" onClick={handleSaveCurrentAsDefault}>
+                기본값 저장
+              </button>
+              <label className="file-field">
+                <span>엑셀 업로드</span>
+                <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} />
+              </label>
+              {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
+              <p className="error-text">label-debug: {debugLabelEvent}</p>
             </form>
-          </section>
 
-          <section className="point-list">
-            <ul>
-              {points.map((point) => (
-                <li key={point.id}>
-                  <div className="point-meta">
-                    <strong>{point.name}</strong>
-                    <span>
-                      x: {point.x}, y: {point.y}
-                    </span>
-                  </div>
-                  <div className="point-actions">
+            <section className="point-list">
+              <div className="point-list-header">
+                <span>호텔 리스트</span>
+                <select
+                  className="point-sort-select"
+                  value={pointSortOrder}
+                  onChange={(event) => setPointSortOrder(event.target.value)}
+                >
+                  <option value={SORT_OPTIONS.nameAsc}>이름 오름차순</option>
+                  <option value={SORT_OPTIONS.nameDesc}>이름 내림차순</option>
+                  <option value={SORT_OPTIONS.quadrantAsc}>사분면 오름차순</option>
+                  <option value={SORT_OPTIONS.quadrantDesc}>사분면 내림차순</option>
+                </select>
+              </div>
+              <div className="point-list-body">
+                <ul>
+                  {sortedPoints.map((point) => (
+                    <li key={point.id}>
+                      <div className="point-meta">
+                        <strong>{point.name}</strong>
+                        <span>{getPointLocationLabel(point, showSecondaryQuadrants)}</span>
+                      </div>
+                      <div className="point-actions">
+                        <label className="point-check">
+                          <input
+                            type="checkbox"
+                            checked={arrowForm.fromId === point.id}
+                            onChange={(event) =>
+                              handleArrowPointToggle('fromId', point.id, event.target.checked)
+                            }
+                          />
+                          <span>시작</span>
+                        </label>
+                        <label className="point-check">
+                          <input
+                            type="checkbox"
+                            checked={arrowForm.toId === point.id}
+                            onChange={(event) =>
+                              handleArrowPointToggle('toId', point.id, event.target.checked)
+                            }
+                          />
+                          <span>끝</span>
+                        </label>
+                        <input
+                          type="color"
+                          value={point.color}
+                          className="color-picker"
+                          onChange={(event) => handlePointColorChange(point.id, event.target.value)}
+                          aria-label={`${point.name} color`}
+                        />
+                        <button
+                          type="button"
+                          className="delete-button"
+                          onClick={() => handleDeletePoint(point.id)}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+
+            <div
+              className="right-stack"
+              style={topPanelHeight ? { height: `${topPanelHeight}px` } : undefined}
+            >
+              <section className="arrow-form-card">
+                <form className="arrow-form" onSubmit={handleAddArrow}>
+                  <label>
+                    시작점
                     <input
-                      type="color"
-                      value={point.color}
-                      className="color-picker"
-                      onChange={(event) => handlePointColorChange(point.id, event.target.value)}
-                      aria-label={`${point.name} color`}
+                      value={points.find((point) => point.id === arrowForm.fromId)?.name ?? ''}
+                      readOnly
+                      placeholder="호텔 리스트에서 선택"
                     />
-                    <button
-                      type="button"
-                      className="delete-button"
-                      onClick={() => handleDeletePoint(point.id)}
-                    >
-                      삭제
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
+                  </label>
 
-          <section className="arrow-list">
-            <ul>
-              {arrowLayouts.map((arrow) => (
-                <li key={arrow.id}>
-                  <span>
-                    {arrow.fromName} → {arrow.toName}
-                  </span>
-                  <button
-                    type="button"
-                    className="delete-button"
-                    onClick={() => handleDeleteArrow(arrow.id)}
-                  >
-                    삭제
+                  <label>
+                    끝점
+                    <input
+                      value={points.find((point) => point.id === arrowForm.toId)?.name ?? ''}
+                      readOnly
+                      placeholder="호텔 리스트에서 선택"
+                    />
+                  </label>
+
+                  <button type="submit" className="secondary-button">
+                    화살표 추가
                   </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+                </form>
+
+                <section className="arrow-list">
+                  <ul>
+                    {arrowLayouts.map((arrow) => (
+                      <li key={arrow.id}>
+                        <span>
+                          {arrow.fromName} → {arrow.toName}
+                        </span>
+                        <button
+                          type="button"
+                          className="delete-button"
+                          onClick={() => handleDeleteArrow(arrow.id)}
+                        >
+                          삭제
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              </section>
+
+              <section className="saved-graph-panel">
+                <div className="saved-graph-form">
+                  <label>
+                    저장 이름
+                    <input
+                      value={savedGraphName}
+                      onChange={(event) => setSavedGraphName(event.target.value)}
+                      placeholder="예: 4월 1차 버전"
+                    />
+                  </label>
+                  <button type="button" className="secondary-button" onClick={handleSaveGraphPreset}>
+                    변경사항 저장
+                  </button>
+                </div>
+
+                <ul className="saved-graph-list">
+                  {savedGraphs.map((item) => (
+                    <li key={item.id}>
+                      <label className="saved-graph-check">
+                        <input
+                          type="checkbox"
+                          checked={activeSavedGraphId === item.id}
+                          onChange={(event) => handleSavedGraphToggle(item.id, event.target.checked)}
+                        />
+                        <span>불러오기</span>
+                      </label>
+                      <input
+                        className="saved-graph-name"
+                        value={item.name}
+                        onChange={(event) => handleSavedGraphRename(item.id, event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="delete-button"
+                        onClick={() => handleSavedGraphDelete(item.id)}
+                      >
+                        삭제
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+          </div>
+
         </aside>
       </section>
     </main>
