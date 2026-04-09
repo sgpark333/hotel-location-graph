@@ -42,7 +42,7 @@ const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
 const MAX_LABEL_FREE_DISTANCE = 20
 const LEADER_REQUIRED_DISTANCE = 3
-const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state-v4'
+const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state-v7'
 const SAVED_GRAPHS_KEY = 'quadrant-graph-saved-states'
 const DEFAULT_COLORS = [
   '#264653',
@@ -60,6 +60,20 @@ const DEFAULT_QUADRANT_VISIBILITY = {
   3: true,
   4: true,
 }
+const CONNECTION_GROUP_COLORS = [
+  '#2563eb',
+  '#16a34a',
+  '#dc2626',
+  '#7c3aed',
+  '#0f766e',
+  '#ca8a04',
+  '#db2777',
+  '#4f46e5',
+  '#059669',
+  '#0891b2',
+  '#84cc16',
+  '#475569',
+]
 
 const EMPTY_FORM = {
   name: '',
@@ -77,6 +91,10 @@ const SORT_OPTIONS = {
   nameDesc: 'nameDesc',
   quadrantAsc: 'quadrantAsc',
   quadrantDesc: 'quadrantDesc',
+}
+const TAB_OPTIONS = {
+  dashboard: 'dashboard',
+  analyze: 'analyze',
 }
 const DEFAULT_GRAPH_STATE = defaultGraphStateData.state
 
@@ -581,28 +599,28 @@ function getSecondaryQuadrantNumber(point) {
 
   const secondaryIndexByQuadrant = {
     1: {
-      '1-1': 1,
-      '2-1': 2,
+      '2-1': 1,
+      '1-1': 2,
       '1-2': 3,
       '2-2': 4,
     },
     2: {
-      '1-1': 2,
-      '2-1': 1,
-      '1-2': 4,
-      '2-2': 3,
+      '1-2': 3,
+      '1-1': 1,
+      '2-2': 2,
+      '2-1': 4,
     },
     3: {
-      '1-1': 3,
-      '2-1': 4,
       '1-2': 1,
       '2-2': 2,
+      '2-1': 3,
+      '1-1': 4,
     },
     4: {
-      '1-1': 4,
-      '2-1': 3,
-      '1-2': 2,
       '2-2': 1,
+      '2-1': 2,
+      '1-1': 3,
+      '1-2': 4,
     },
   }
 
@@ -616,6 +634,103 @@ function getPointLocationLabel(point, showSecondaryQuadrants) {
   return showSecondaryQuadrants
     ? `위치 : ${getSecondaryQuadrantLabel(point)}`
     : `위치 : ${getPrimaryQuadrantLabel(point)}`
+}
+
+function getAnalyzeQuadrantGroups(points, showSecondaryQuadrants) {
+  const collator = new Intl.Collator('ko')
+  const groups = []
+
+  for (let primary = 1; primary <= 4; primary += 1) {
+    if (showSecondaryQuadrants) {
+      for (let secondary = 1; secondary <= 4; secondary += 1) {
+        groups.push({
+          id: `${primary}-${secondary}`,
+          label: `${primary}-${secondary} 사분면`,
+          items: [],
+        })
+      }
+    } else {
+      groups.push({
+        id: `${primary}`,
+        label: `${primary}사분면`,
+        items: [],
+      })
+    }
+  }
+
+  points
+    .filter((point) => point.visible !== false)
+    .forEach((point) => {
+      const id = showSecondaryQuadrants
+        ? `${getQuadrant(point)}-${getSecondaryQuadrantNumber(point)}`
+        : `${getQuadrant(point)}`
+      const target = groups.find((group) => group.id === id)
+
+      if (target) {
+        target.items.push(point)
+      }
+    })
+
+  groups.forEach((group) => {
+    group.items.sort((left, right) => collator.compare(left.name, right.name))
+  })
+
+  return groups
+}
+
+function hexToRgba(color, alpha) {
+  if (typeof color !== 'string') {
+    return `rgba(38, 70, 83, ${alpha})`
+  }
+
+  const normalized = color.replace('#', '')
+
+  if (normalized.length !== 6) {
+    return `rgba(38, 70, 83, ${alpha})`
+  }
+
+  const red = Number.parseInt(normalized.slice(0, 2), 16)
+  const green = Number.parseInt(normalized.slice(2, 4), 16)
+  const blue = Number.parseInt(normalized.slice(4, 6), 16)
+
+  if ([red, green, blue].some((value) => Number.isNaN(value))) {
+    return `rgba(38, 70, 83, ${alpha})`
+  }
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`
+}
+
+function buildDisplayColorMap(points, connections) {
+  const displayMap = Object.fromEntries(points.map((point) => [point.id, point.color]))
+  const pointIds = new Set(points.map((point) => point.id))
+
+  connections.forEach((connection, index) => {
+    if (!pointIds.has(connection.fromId) || !pointIds.has(connection.toId)) {
+      return
+    }
+
+    const groupColor = CONNECTION_GROUP_COLORS[index % CONNECTION_GROUP_COLORS.length]
+    displayMap[connection.fromId] = groupColor
+    displayMap[connection.toId] = groupColor
+  })
+
+  return displayMap
+}
+
+function getAnalyzeItemStyle(point, connectionPointIds, displayColorMap) {
+  const groupColor = displayColorMap[point.id] ?? point.color
+  const isConnected = connectionPointIds.has(point.id)
+  const isTagged = /\((재|신)\)\s*$/.test(point.name)
+
+  if (!isConnected && !isTagged) {
+    return null
+  }
+
+  return {
+    '--analyze-accent': groupColor,
+    backgroundColor: hexToRgba(groupColor, isConnected ? 0.12 : 0.09),
+    borderColor: hexToRgba(groupColor, isConnected ? 0.28 : 0.2),
+  }
 }
 
 function getDenseNeighborCount(point, pointScreenMap, points) {
@@ -971,7 +1086,7 @@ function PointShape(props) {
         cx={cx}
         cy={cy}
         r={radius}
-        fill={payload.color}
+        fill={payload.displayColor ?? payload.color}
         opacity={opacity}
       />
     </g>
@@ -992,7 +1107,6 @@ function App() {
 
   const chartRef = useRef(null)
   const chartWrapRef = useRef(null)
-  const entryFormRef = useRef(null)
   const chartSizeRef = useRef({ width: 0, height: 0 })
   const dragStateRef = useRef(null)
   const activeLabelRef = useRef(null)
@@ -1025,8 +1139,9 @@ function App() {
   const [dragState, setDragState] = useState(null)
   const [activeLabelId, setActiveLabelId] = useState(null)
   const [debugLabelEvent, setDebugLabelEvent] = useState('idle')
-  const [topPanelHeight, setTopPanelHeight] = useState(0)
-  const [pointSortOrder, setPointSortOrder] = useState(SORT_OPTIONS.asc)
+  const [pointSortOrder, setPointSortOrder] = useState(SORT_OPTIONS.nameAsc)
+  const [isDisplayPanelOpen, setIsDisplayPanelOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState(TAB_OPTIONS.dashboard)
 
   useEffect(() => {
     try {
@@ -1035,30 +1150,6 @@ function App() {
       // Ignore local storage issues.
     }
   }, [savedGraphs])
-
-  useEffect(() => {
-    const node = entryFormRef.current
-
-    if (!node || typeof ResizeObserver === 'undefined') {
-      return undefined
-    }
-
-    const updateHeight = () => {
-      setTopPanelHeight(node.getBoundingClientRect().height)
-    }
-
-    updateHeight()
-
-    const observer = new ResizeObserver(() => {
-      updateHeight()
-    })
-
-    observer.observe(node)
-
-    return () => {
-      observer.disconnect()
-    }
-  }, [points.length, savedGraphs.length, showSecondaryQuadrants, errorMessage, debugLabelEvent])
 
   useEffect(() => {
     if (!chartWrapRef.current) {
@@ -1155,15 +1246,33 @@ function App() {
     [connections],
   )
 
+  const displayColorMap = useMemo(
+    () => buildDisplayColorMap(points, connections),
+    [points, connections],
+  )
+
   const visiblePoints = useMemo(
     () =>
-      points.filter(
-        (point) =>
+      points.filter((point) => {
+        if (showConnectedOnly) {
+          return connectedPointIds.has(point.id)
+        }
+
+        return (
           point.visible !== false &&
-          quadrantVisibility[getQuadrant(point)] !== false &&
-          (!showConnectedOnly || connectedPointIds.has(point.id)),
-      ),
+          quadrantVisibility[getQuadrant(point)] !== false
+        )
+      }),
     [points, quadrantVisibility, showConnectedOnly, connectedPointIds],
+  )
+
+  const visibleDisplayPoints = useMemo(
+    () =>
+      visiblePoints.map((point) => ({
+        ...point,
+        displayColor: displayColorMap[point.id] ?? point.color,
+      })),
+    [visiblePoints, displayColorMap],
   )
 
   const visiblePointIds = useMemo(
@@ -1172,8 +1281,8 @@ function App() {
   )
 
   const pointRadiusMap = useMemo(
-    () => buildPointRadiusMap(visiblePoints, pointScreenMap),
-    [visiblePoints, pointScreenMap],
+    () => buildPointRadiusMap(visibleDisplayPoints, pointScreenMap),
+    [visibleDisplayPoints, pointScreenMap],
   )
 
   const axisLabelPositions = useMemo(() => {
@@ -1233,13 +1342,30 @@ function App() {
   }, [pointSortOrder, points, showSecondaryQuadrants])
 
   const labelLayouts = useMemo(
-    () => buildLabelLayouts(visiblePoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds),
-    [visiblePoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds],
+    () => buildLabelLayouts(visibleDisplayPoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds),
+    [visibleDisplayPoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds],
   )
 
   const arrowLayouts = useMemo(
     () => buildArrowLayouts(visibleConnections, pointScreenMap),
     [visibleConnections, pointScreenMap],
+  )
+
+  const analyzeQuadrantGroups = useMemo(
+    () =>
+      getAnalyzeQuadrantGroups(
+        points.map((point) => ({
+          ...point,
+          displayColor: displayColorMap[point.id] ?? point.color,
+        })),
+        showSecondaryQuadrants,
+      ),
+    [points, displayColorMap, showSecondaryQuadrants],
+  )
+
+  const analyzeHighlightIds = useMemo(
+    () => new Set(connections.flatMap((connection) => [connection.fromId, connection.toId])),
+    [connections],
   )
 
   const getCurrentGraphState = () =>
@@ -1339,7 +1465,7 @@ function App() {
     }
 
     dragStateRef.current = nextDragState
-    setDebugLabelEvent(`drag-start:${pointId}`)
+    setDebugLabelEvent(`drag-start:${labelId}`)
     setDragState(nextDragState)
 
   }
@@ -1613,6 +1739,16 @@ function App() {
     }))
   }
 
+  const handleAllQuadrantsVisibility = (visible) => {
+    setActiveSavedGraphId(null)
+    setQuadrantVisibility({
+      1: visible,
+      2: visible,
+      3: visible,
+      4: visible,
+    })
+  }
+
   const handleAddArrow = (event) => {
     event.preventDefault()
 
@@ -1631,19 +1767,7 @@ function App() {
       return
     }
 
-    const fromPoint = points.find((point) => point.id === arrowForm.fromId)
-
-    if (!fromPoint) {
-      setErrorMessage('시작점 정보를 찾을 수 없습니다.')
-      return
-    }
-
     setActiveSavedGraphId(null)
-    setPoints((current) =>
-      current.map((point) =>
-        point.id === arrowForm.toId ? { ...point, color: fromPoint.color } : point,
-      ),
-    )
     setConnections((current) => [
       ...current,
       {
@@ -1672,6 +1796,13 @@ function App() {
         cacheBust: true,
         backgroundColor: '#ffffff',
         pixelRatio: 3,
+        filter: (node) => {
+          if (!(node instanceof HTMLElement || node instanceof SVGElement)) {
+            return true
+          }
+
+          return node.dataset.exportHidden !== 'true'
+        },
       })
       const link = document.createElement('a')
       link.download = 'quadrant-graph.png'
@@ -1740,7 +1871,25 @@ function App() {
 
   return (
     <main className="app-shell">
+      <nav className="top-tabs" aria-label="메인 메뉴">
+        <button
+          type="button"
+          className={`top-tab ${activeTab === TAB_OPTIONS.dashboard ? 'is-active' : ''}`}
+          onClick={() => setActiveTab(TAB_OPTIONS.dashboard)}
+        >
+          Dashboard
+        </button>
+        <button
+          type="button"
+          className={`top-tab ${activeTab === TAB_OPTIONS.analyze ? 'is-active' : ''}`}
+          onClick={() => setActiveTab(TAB_OPTIONS.analyze)}
+        >
+          Analyze
+        </button>
+      </nav>
       <section className="workspace">
+        {activeTab === TAB_OPTIONS.dashboard ? (
+        <>
         <div className="chart-panel" ref={chartRef}>
           <div
             className="chart-wrap"
@@ -1750,6 +1899,94 @@ function App() {
             onMouseLeave={handleChartMouseUp}
             onMouseDown={handleChartMouseDown}
           >
+            <button
+              type="button"
+              className="control-panel-toggle"
+              data-export-hidden="true"
+              onClick={() => setIsDisplayPanelOpen((current) => !current)}
+            >
+              표시 옵션
+            </button>
+            {isDisplayPanelOpen ? (
+              <section
+                className="floating-control-panel floating-display-panel"
+                data-export-hidden="true"
+              >
+                <div className="floating-control-header">
+                  <strong>표시 옵션</strong>
+                  <button
+                    type="button"
+                    className="floating-control-close"
+                    onClick={() => setIsDisplayPanelOpen(false)}
+                    aria-label="표시 옵션 닫기"
+                  >
+                    닫기
+                  </button>
+                </div>
+                <div className="display-options-form">
+                  <label className="toggle-field">
+                    <input
+                      type="checkbox"
+                      checked={showSecondaryQuadrants}
+                      onChange={(event) => {
+                        setActiveSavedGraphId(null)
+                        setShowSecondaryQuadrants(event.target.checked)
+                      }}
+                    />
+                    <span>2차 사분면 표시</span>
+                  </label>
+
+                  <label className="toggle-field">
+                    <input
+                      type="checkbox"
+                      checked={showConnectedOnly}
+                      onChange={(event) => {
+                        setActiveSavedGraphId(null)
+                        setShowConnectedOnly(event.target.checked)
+                      }}
+                    />
+                    <span>화살표 연결된 점만 표시</span>
+                  </label>
+
+                  <div className="quadrant-filter-group">
+                    <div className="quadrant-filter-header">
+                      <span className="quadrant-filter-title">사분면 호텔 표시</span>
+                      <div className="quadrant-filter-actions">
+                        <button
+                          type="button"
+                          className="quadrant-filter-button"
+                          onClick={() => handleAllQuadrantsVisibility(true)}
+                        >
+                          전체 선택
+                        </button>
+                        <button
+                          type="button"
+                          className="quadrant-filter-button"
+                          onClick={() => handleAllQuadrantsVisibility(false)}
+                        >
+                          전체 해제
+                        </button>
+                      </div>
+                    </div>
+                    <div className="quadrant-filter-grid">
+                      {[1, 2, 3, 4].map((quadrant) => (
+                        <label key={quadrant} className="toggle-field quadrant-toggle">
+                          <input
+                            type="checkbox"
+                            checked={quadrantVisibility[quadrant] !== false}
+                            onChange={(event) =>
+                              handleQuadrantVisibilityChange(quadrant, event.target.checked)
+                            }
+                          />
+                          <span>{quadrant}사분면</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             {axisLabelPositions ? (
               <>
                 <div
@@ -1829,7 +2066,7 @@ function App() {
                 <ReferenceLine x={0} stroke="#000000" strokeWidth={2} />
                 <ReferenceLine y={18} stroke="#000000" strokeWidth={2} />
                 <Scatter
-                  data={visiblePoints}
+                  data={visibleDisplayPoints}
                   shape={(props) => (
                     <PointShape
                       {...props}
@@ -1923,7 +2160,7 @@ function App() {
 
         <aside className="sidebar">
           <div className="sidebar-top">
-            <form className="entry-form" onSubmit={handleSubmit} ref={entryFormRef}>
+            <form className="entry-form" onSubmit={handleSubmit}>
               <label>
                 호텔명
                 <input
@@ -1957,48 +2194,6 @@ function App() {
                   placeholder="18"
                 />
               </label>
-
-              <label className="toggle-field">
-                <input
-                  type="checkbox"
-                  checked={showSecondaryQuadrants}
-                  onChange={(event) => {
-                    setActiveSavedGraphId(null)
-                    setShowSecondaryQuadrants(event.target.checked)
-                  }}
-                />
-                <span>2차 사분면 표시</span>
-              </label>
-
-              <label className="toggle-field">
-                <input
-                  type="checkbox"
-                  checked={showConnectedOnly}
-                  onChange={(event) => {
-                    setActiveSavedGraphId(null)
-                    setShowConnectedOnly(event.target.checked)
-                  }}
-                />
-                <span>화살표 연결된 점만 표시</span>
-              </label>
-
-              <div className="quadrant-filter-group">
-                <span className="quadrant-filter-title">사분면 표시</span>
-                <div className="quadrant-filter-grid">
-                  {[1, 2, 3, 4].map((quadrant) => (
-                    <label key={quadrant} className="toggle-field quadrant-toggle">
-                      <input
-                        type="checkbox"
-                        checked={quadrantVisibility[quadrant] !== false}
-                        onChange={(event) =>
-                          handleQuadrantVisibilityChange(quadrant, event.target.checked)
-                        }
-                      />
-                      <span>{quadrant}사분면</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
 
               <button type="submit">점 추가</button>
               <button type="button" className="secondary-button" onClick={handleDownload}>
@@ -2091,10 +2286,7 @@ function App() {
               </div>
             </section>
 
-            <div
-              className="right-stack"
-              style={topPanelHeight ? { height: `${topPanelHeight}px` } : undefined}
-            >
+            <div className="right-stack">
               <section className="arrow-form-card">
                 <form className="arrow-form" onSubmit={handleAddArrow}>
                   <label>
@@ -2188,6 +2380,63 @@ function App() {
           </div>
 
         </aside>
+        </>
+        ) : (
+          <section className="analyze-view">
+            <div className="analyze-header">
+              <div className="analyze-header-copy">
+                <h2>Analyze</h2>
+                <p>{showSecondaryQuadrants ? 'N-n 사분면별 호텔 목록' : '1차 사분면별 호텔 목록'}</p>
+              </div>
+              <label className="analyze-toggle">
+                <input
+                  type="checkbox"
+                  checked={showSecondaryQuadrants}
+                  onChange={(event) => {
+                    setActiveSavedGraphId(null)
+                    setShowSecondaryQuadrants(event.target.checked)
+                  }}
+                />
+                <span>2차 사분면 표시</span>
+              </label>
+            </div>
+            <div className="analyze-board">
+              {analyzeQuadrantGroups.map((group) => (
+                <section key={group.id} className="analyze-card">
+                  <header className="analyze-card-header">
+                    <strong>{group.label}</strong>
+                    <span>{group.items.length}개</span>
+                  </header>
+                  <div className="analyze-card-body">
+                    {group.items.length ? (
+                      <ul className="analyze-list">
+                          {group.items.map((point) => {
+                            const analyzeItemStyle = getAnalyzeItemStyle(
+                              point,
+                              analyzeHighlightIds,
+                              displayColorMap,
+                            )
+
+                            return (
+                            <li
+                              key={point.id}
+                              className={`analyze-item ${analyzeItemStyle ? 'is-tinted' : ''}`}
+                              style={analyzeItemStyle ?? undefined}
+                            >
+                              <span className="analyze-item-name">{point.name}</span>
+                            </li>
+                            )
+                          })}
+                      </ul>
+                    ) : (
+                      <p className="analyze-empty">해당 호텔 없음</p>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+        )}
       </section>
     </main>
   )
