@@ -433,6 +433,18 @@
   flex-shrink: 0;
 }
 
+.saved-graph-load-button {
+  border: 1px solid #d7dde3;
+  background: #fff;
+  color: #264653;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .saved-graph-name {
   flex: 1;
   min-width: 0;

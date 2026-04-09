@@ -1973,14 +1973,13 @@ function App() {
                 <ul className="saved-graph-list">
                   {savedGraphs.map((item) => (
                     <li key={item.id}>
-                      <label className="saved-graph-check">
-                        <input
-                          type="checkbox"
-                          checked={activeSavedGraphId === item.id}
-                          onChange={(event) => handleSavedGraphToggle(item.id, event.target.checked)}
-                        />
-                        <span>불러오기</span>
-                      </label>
+                      <button
+                        type="button"
+                        className="saved-graph-load-button"
+                        onClick={() => handleSavedGraphToggle(item.id, activeSavedGraphId !== item.id)}
+                      >
+                        {activeSavedGraphId === item.id ? '불러옴' : '불러오기'}
+                      </button>
                       <input
                         className="saved-graph-name"
                         value={item.name}
