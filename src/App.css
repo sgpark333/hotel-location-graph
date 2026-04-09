@@ -31,6 +31,29 @@
   overflow: visible;
 }
 
+.chart-axis-label {
+  position: absolute;
+  z-index: 4;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgba(20, 33, 61, 0.7);
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+}
+
+.chart-axis-label-top {
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center center;
+}
+
+.chart-axis-label-left {
+  transform: translateY(-50%);
+  transform-origin: center center;
+}
+
+
+
 .chart-wrap svg,
 .chart-wrap .recharts-surface,
 .chart-wrap .recharts-wrapper {
@@ -316,6 +339,24 @@
   overflow-x: hidden;
 }
 
+.point-list-body li[data-visible='false'] {
+  background: #f3f5f7;
+  opacity: 0.72;
+}
+
+.point-list-body li[data-visible='false'] .point-meta,
+.point-list-body li[data-visible='false'] .point-actions,
+.point-list-body li[data-visible='false'] .point-visibility-toggle,
+.point-list-body li[data-visible='false'] .delete-button {
+  color: #6b7280;
+}
+
+.point-list-body li[data-visible='false'] .color-picker,
+.point-list-body li[data-visible='false'] .delete-button,
+.point-list-body li[data-visible='false'] .point-check {
+  opacity: 0.85;
+}
+
 .point-list-header {
   display: flex;
   align-items: center;
@@ -325,6 +366,28 @@
   font-size: 0.8rem;
   font-weight: 700;
   color: #14213d;
+}
+
+.point-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.point-visibility-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #264653;
+  white-space: nowrap;
+}
+
+.point-visibility-toggle input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
 }
 
 .point-sort-select {

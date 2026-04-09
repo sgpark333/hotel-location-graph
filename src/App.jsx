@@ -42,7 +42,7 @@ const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
 const MAX_LABEL_FREE_DISTANCE = 20
 const LEADER_REQUIRED_DISTANCE = 3
-const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state'
+const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state-v3'
 const SAVED_GRAPHS_KEY = 'quadrant-graph-saved-states'
 const DEFAULT_COLORS = [
   '#264653',
@@ -120,6 +120,7 @@ function normalizeGraphState(state) {
             x,
             y,
             color: point?.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length],
+            visible: point?.visible !== false,
           }
         })
         .filter(Boolean)
@@ -148,6 +149,22 @@ function normalizeGraphState(state) {
             ).map(([id, offset]) => [id, { x: Number(offset.x), y: Number(offset.y) }]),
           )
         : {},
+    axisLabelOffsets:
+      state.axisLabelOffsets && typeof state.axisLabelOffsets === 'object'
+        ? {
+            top: {
+              x: Number(state.axisLabelOffsets.top?.x) || 0,
+              y: Number(state.axisLabelOffsets.top?.y) || 0,
+            },
+            left: {
+              x: Number(state.axisLabelOffsets.left?.x) || 0,
+              y: Number(state.axisLabelOffsets.left?.y) || 0,
+            },
+          }
+        : {
+            top: { x: 0, y: 0 },
+            left: { x: 0, y: 0 },
+          },
     showSecondaryQuadrants: Boolean(state.showSecondaryQuadrants),
   }
 }
@@ -166,7 +183,7 @@ function readStorageJson(key, fallback) {
 }
 
 function getInitialGraphState() {
-  return normalizeGraphState(readStorageJson(DEFAULT_GRAPH_STATE_KEY, null))
+  return normalizeGraphState(readStorageJson(DEFAULT_GRAPH_STATE_KEY, DEFAULT_GRAPH_STATE))
 }
 
 function getInitialSavedGraphs() {
@@ -664,7 +681,7 @@ function buildGuideLines(chartSize, showSecondaryQuadrants) {
   }
 }
 
-function buildLabelLayouts(points, pointScreenMap, radiusMap, labelOffsets) {
+function buildLabelLayouts(points, pointScreenMap, radiusMap, labelOffsets, sourcePointIds) {
   return points
     .map((point) => {
       const coords = pointScreenMap[point.id]
@@ -699,6 +716,7 @@ function buildLabelLayouts(points, pointScreenMap, radiusMap, labelOffsets) {
       return {
         id: point.id,
         color: '#000000',
+        opacity: sourcePointIds.has(point.id) ? 0.5 : 1,
         lines,
         box,
         textX,
@@ -923,7 +941,7 @@ function buildArrowLayouts(connections, pointScreenMap) {
 }
 
 function PointShape(props) {
-  const { cx, cy, payload, onPointRender, radius = POINT_RADIUS } = props
+  const { cx, cy, payload, onPointRender, radius = POINT_RADIUS, opacity = 1 } = props
 
   useEffect(() => {
     if (typeof cx === 'number' && typeof cy === 'number' && onPointRender) {
@@ -938,6 +956,7 @@ function PointShape(props) {
         cy={cy}
         r={radius}
         fill={payload.color}
+        opacity={opacity}
       />
     </g>
   )
@@ -972,6 +991,12 @@ function App() {
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
   const [labelOffsets, setLabelOffsets] = useState(() => initialGraphStateRef.current.labelOffsets)
+  const [axisLabelOffsets, setAxisLabelOffsets] = useState(
+    () => initialGraphStateRef.current.axisLabelOffsets ?? {
+      top: { x: 0, y: 0 },
+      left: { x: 0, y: 0 },
+    },
+  )
   const [savedGraphs, setSavedGraphs] = useState(() => initialSavedGraphsRef.current)
   const [savedGraphName, setSavedGraphName] = useState('')
   const [activeSavedGraphId, setActiveSavedGraphId] = useState(null)
@@ -1074,10 +1099,11 @@ function App() {
 
   const pointScreenMap = useMemo(
     () => {
-      const manualPointMap = buildPointScreenMap(points, chartSize)
+      const visiblePoints = points.filter((point) => point.visible !== false)
+      const manualPointMap = buildPointScreenMap(visiblePoints, chartSize)
 
       return Object.fromEntries(
-        points.map((point) => {
+        visiblePoints.map((point) => {
           const rendered = renderedPointMap[point.id]
           const fallback = manualPointMap[point.id]
 
@@ -1096,12 +1122,37 @@ function App() {
         }),
       )
     },
-    [points, renderedPointMap, chartSize, labelOffsets],
+    [points, renderedPointMap, chartSize],
+  )
+
+  const visiblePoints = useMemo(
+    () => points.filter((point) => point.visible !== false),
+    [points],
   )
 
   const pointRadiusMap = useMemo(
-    () => buildPointRadiusMap(points, pointScreenMap),
-    [points, pointScreenMap],
+    () => buildPointRadiusMap(visiblePoints, pointScreenMap),
+    [visiblePoints, pointScreenMap],
+  )
+
+  const axisLabelPositions = useMemo(() => {
+    if (!chartSize.width || !chartSize.height) {
+      return null
+    }
+
+    const metrics = buildPlotMetrics(chartSize)
+
+    return {
+      topX: metrics.toX(0) + (axisLabelOffsets.top?.x ?? 0),
+      topY: Math.max(8, CHART_MARGIN.top - 20) + (axisLabelOffsets.top?.y ?? 0),
+      leftX: Math.max(10, CHART_MARGIN.left - 16) + (axisLabelOffsets.left?.x ?? 0),
+      leftY: metrics.toY(18) + (axisLabelOffsets.left?.y ?? 0),
+    }
+  }, [chartSize, axisLabelOffsets])
+
+  const sourcePointIds = useMemo(
+    () => new Set(connections.map((connection) => connection.fromId)),
+    [connections],
   )
 
   const sortedPoints = useMemo(() => {
@@ -1132,13 +1183,20 @@ function App() {
   }, [pointSortOrder, points, showSecondaryQuadrants])
 
   const labelLayouts = useMemo(
-    () => buildLabelLayouts(points, pointScreenMap, pointRadiusMap, labelOffsets),
-    [points, pointScreenMap, pointRadiusMap, labelOffsets],
+    () => buildLabelLayouts(visiblePoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds),
+    [visiblePoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds],
   )
 
   const arrowLayouts = useMemo(
-    () => buildArrowLayouts(connections, pointScreenMap),
-    [connections, pointScreenMap],
+    () => buildArrowLayouts(
+      connections.filter(
+        (connection) =>
+          visiblePoints.some((point) => point.id === connection.fromId) &&
+          visiblePoints.some((point) => point.id === connection.toId),
+      ),
+      pointScreenMap,
+    ),
+    [connections, pointScreenMap, visiblePoints],
   )
 
   const getCurrentGraphState = () =>
@@ -1146,6 +1204,7 @@ function App() {
       points,
       connections,
       labelOffsets,
+      axisLabelOffsets,
       showSecondaryQuadrants,
     })
 
@@ -1157,6 +1216,7 @@ function App() {
     setPoints(normalized.points)
     setConnections(normalized.connections)
     setLabelOffsets(normalized.labelOffsets)
+    setAxisLabelOffsets(normalized.axisLabelOffsets)
     setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
     setArrowForm(EMPTY_ARROW_FORM)
     setActiveLabelId(null)
@@ -1198,11 +1258,11 @@ function App() {
     }
   }
 
-  const handleLabelMouseDown = (event, pointId) => {
-    setDebugLabelEvent(`mousedown:${pointId}`)
+  const handleLabelMouseDown = (event, labelId, type = 'point') => {
+    setDebugLabelEvent(`mousedown:${labelId}`)
 
-    if (activeLabelRef.current !== pointId) {
-      setDebugLabelEvent(`mousedown-blocked:${pointId}`)
+    if (activeLabelRef.current !== labelId) {
+      setDebugLabelEvent(`mousedown-blocked:${labelId}`)
       return
     }
 
@@ -1213,15 +1273,18 @@ function App() {
     }
 
     const pointer = toChartCoordinates(event.clientX, event.clientY)
-    const currentOffset = labelOffsets[pointId] ?? { x: 0, y: 0 }
+    const currentOffset = type === 'axis'
+      ? axisLabelOffsets[labelId] ?? { x: 0, y: 0 }
+      : labelOffsets[labelId] ?? { x: 0, y: 0 }
 
     if (!pointer) {
-      setDebugLabelEvent(`mousedown-no-pointer:${pointId}`)
+      setDebugLabelEvent(`mousedown-no-pointer:${labelId}`)
       return
     }
 
     const nextDragState = {
-      pointId,
+      pointId: labelId,
+      type,
       pointerStartX: pointer.x,
       pointerStartY: pointer.y,
       initialOffsetX: currentOffset.x,
@@ -1234,21 +1297,21 @@ function App() {
 
   }
 
-  const handleLabelActivate = (event, pointId) => {
+  const handleLabelActivate = (event, labelId) => {
     event.preventDefault()
     event.stopPropagation()
-    setDebugLabelEvent(`dblclick:${pointId}`)
-    if (activeLabelRef.current === pointId) {
-      handleResetLabel(pointId)
+    setDebugLabelEvent(`dblclick:${labelId}`)
+    if (activeLabelRef.current === labelId) {
+      handleResetLabel(labelId)
       activeLabelRef.current = null
       setActiveLabelId(null)
-      setDebugLabelEvent(`dblclick-reset:${pointId}`)
+      setDebugLabelEvent(`dblclick-reset:${labelId}`)
       return
     }
 
-    activeLabelRef.current = pointId
-    setActiveLabelId(pointId)
-    setDebugLabelEvent(`active:${pointId}`)
+    activeLabelRef.current = labelId
+    setActiveLabelId(labelId)
+    setDebugLabelEvent(`active:${labelId}`)
   }
 
   const handleChartMouseMove = (event) => {
@@ -1267,12 +1330,22 @@ function App() {
 
     setDebugLabelEvent(`dragging:${currentDragState.pointId}`)
     setActiveSavedGraphId(null)
+    const nextOffset = {
+      x: currentDragState.initialOffsetX + (pointer.x - currentDragState.pointerStartX),
+      y: currentDragState.initialOffsetY + (pointer.y - currentDragState.pointerStartY),
+    }
+
+    if (currentDragState.type === 'axis') {
+      setAxisLabelOffsets((current) => ({
+        ...current,
+        [currentDragState.pointId]: nextOffset,
+      }))
+      return
+    }
+
     setLabelOffsets((current) => ({
       ...current,
-      [currentDragState.pointId]: {
-        x: currentDragState.initialOffsetX + (pointer.x - currentDragState.pointerStartX),
-        y: currentDragState.initialOffsetY + (pointer.y - currentDragState.pointerStartY),
-      },
+      [currentDragState.pointId]: nextOffset,
     }))
   }
 
@@ -1299,18 +1372,26 @@ function App() {
     }
   }
 
-  const handleResetLabel = (pointId) => {
-    if (activeLabelRef.current === pointId) {
+  const handleResetLabel = (labelId) => {
+    if (activeLabelRef.current === labelId) {
       activeLabelRef.current = null
     }
 
+    if (labelId === 'top' || labelId === 'left') {
+      setAxisLabelOffsets((current) => ({
+        ...current,
+        [labelId]: { x: 0, y: 0 },
+      }))
+      return
+    }
+
     setLabelOffsets((current) => {
-      if (!current[pointId]) {
+      if (!current[labelId]) {
         return current
       }
 
       const next = { ...current }
-      delete next[pointId]
+      delete next[labelId]
       return next
     })
   }
@@ -1470,6 +1551,13 @@ function App() {
     )
   }
 
+  const handlePointVisibilityChange = (id, visible) => {
+    setActiveSavedGraphId(null)
+    setPoints((current) =>
+      current.map((point) => (point.id === id ? { ...point, visible } : point)),
+    )
+  }
+
   const handleAddArrow = (event) => {
     event.preventDefault()
 
@@ -1607,6 +1695,28 @@ function App() {
             onMouseLeave={handleChartMouseUp}
             onMouseDown={handleChartMouseDown}
           >
+            {axisLabelPositions ? (
+              <>
+                <div
+                  className="chart-axis-label chart-axis-label-top"
+                  style={{
+                    left: `${axisLabelPositions.topX}px`,
+                    top: `${axisLabelPositions.topY}px`,
+                  }}
+                >
+                  운영 난이도
+                </div>
+                <div
+                  className="chart-axis-label chart-axis-label-left"
+                  style={{
+                    left: `${axisLabelPositions.leftX}px`,
+                    top: `${axisLabelPositions.leftY}px`,
+                  }}
+                >
+                  단가 점수
+                </div>
+              </>
+            ) : null}
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={CHART_MARGIN}>
                 <XAxis
@@ -1664,12 +1774,13 @@ function App() {
                 <ReferenceLine x={0} stroke="#000000" strokeWidth={2} />
                 <ReferenceLine y={18} stroke="#000000" strokeWidth={2} />
                 <Scatter
-                  data={points}
+                  data={visiblePoints}
                   shape={(props) => (
                     <PointShape
                       {...props}
                       radius={pointRadiusMap[props.payload.id] ?? POINT_RADIUS}
                       onPointRender={handlePointRender}
+                      opacity={sourcePointIds.has(props.payload.id) ? 0.5 : 1}
                     />
                   )}
                   isAnimationActive={false}
@@ -1745,6 +1856,7 @@ function App() {
                     left: `${layout.textX}px`,
                     top: `${layout.textY}px`,
                     fontSize: `${layout.fontSize}px`,
+                    opacity: layout.opacity,
                   }}
                 >
                   {layout.lines.join('\n')}
@@ -1835,9 +1947,21 @@ function App() {
               <div className="point-list-body">
                 <ul>
                   {sortedPoints.map((point) => (
-                    <li key={point.id}>
+                    <li key={point.id} data-visible={point.visible !== false ? 'true' : 'false'}>
                       <div className="point-meta">
-                        <strong>{point.name}</strong>
+                        <div className="point-title-row">
+                          <label className="point-visibility-toggle">
+                            <input
+                              type="checkbox"
+                              checked={point.visible !== false}
+                              onChange={(event) =>
+                                handlePointVisibilityChange(point.id, event.target.checked)
+                              }
+                            />
+                            <span>표기</span>
+                          </label>
+                          <strong>{point.name}</strong>
+                        </div>
                         <span>{getPointLocationLabel(point, showSecondaryQuadrants)}</span>
                       </div>
                       <div className="point-actions">
