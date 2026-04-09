@@ -19,7 +19,7 @@ const X_TICKS = [-7.2, -3.6, 0, 3.6, 7.2]
 const Y_TICKS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36]
 const SUB_QUADRANT_X = [-3.5, 3.5]
 const SUB_QUADRANT_Y = [9, 27]
-const CHART_MARGIN = { top: 36, right: 36, bottom: 28, left: 28 }
+const CHART_MARGIN = { top: 18, right: 8, bottom: -6, left: -48 }
 const LABEL_MAX_CHARS = 18
 const POINT_RADIUS = 4.5
 const LABEL_LINE_HEIGHT = 14
@@ -42,7 +42,7 @@ const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
 const MAX_LABEL_FREE_DISTANCE = 20
 const LEADER_REQUIRED_DISTANCE = 3
-const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state-v3'
+const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state-v4'
 const SAVED_GRAPHS_KEY = 'quadrant-graph-saved-states'
 const DEFAULT_COLORS = [
   '#264653',
@@ -54,6 +54,12 @@ const DEFAULT_COLORS = [
   '#d62828',
   '#3a86ff',
 ]
+const DEFAULT_QUADRANT_VISIBILITY = {
+  1: true,
+  2: true,
+  3: true,
+  4: true,
+}
 
 const EMPTY_FORM = {
   name: '',
@@ -165,6 +171,16 @@ function normalizeGraphState(state) {
             top: { x: 0, y: 0 },
             left: { x: 0, y: 0 },
           },
+    quadrantVisibility:
+      state.quadrantVisibility && typeof state.quadrantVisibility === 'object'
+        ? {
+            1: state.quadrantVisibility[1] !== false,
+            2: state.quadrantVisibility[2] !== false,
+            3: state.quadrantVisibility[3] !== false,
+            4: state.quadrantVisibility[4] !== false,
+          }
+        : DEFAULT_QUADRANT_VISIBILITY,
+    showConnectedOnly: Boolean(state.showConnectedOnly),
     showSecondaryQuadrants: Boolean(state.showSecondaryQuadrants),
   }
 }
@@ -987,6 +1003,12 @@ function App() {
   const [showSecondaryQuadrants, setShowSecondaryQuadrants] = useState(
     () => initialGraphStateRef.current.showSecondaryQuadrants,
   )
+  const [quadrantVisibility, setQuadrantVisibility] = useState(
+    () => initialGraphStateRef.current.quadrantVisibility ?? DEFAULT_QUADRANT_VISIBILITY,
+  )
+  const [showConnectedOnly, setShowConnectedOnly] = useState(
+    () => initialGraphStateRef.current.showConnectedOnly ?? false,
+  )
   const [errorMessage, setErrorMessage] = useState('')
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
@@ -1103,7 +1125,7 @@ function App() {
       const manualPointMap = buildPointScreenMap(visiblePoints, chartSize)
 
       return Object.fromEntries(
-        visiblePoints.map((point) => {
+      visiblePoints.map((point) => {
           const rendered = renderedPointMap[point.id]
           const fallback = manualPointMap[point.id]
 
@@ -1125,9 +1147,28 @@ function App() {
     [points, renderedPointMap, chartSize],
   )
 
+  const connectedPointIds = useMemo(
+    () =>
+      new Set(
+        connections.flatMap((connection) => [connection.fromId, connection.toId]),
+      ),
+    [connections],
+  )
+
   const visiblePoints = useMemo(
-    () => points.filter((point) => point.visible !== false),
-    [points],
+    () =>
+      points.filter(
+        (point) =>
+          point.visible !== false &&
+          quadrantVisibility[getQuadrant(point)] !== false &&
+          (!showConnectedOnly || connectedPointIds.has(point.id)),
+      ),
+    [points, quadrantVisibility, showConnectedOnly, connectedPointIds],
+  )
+
+  const visiblePointIds = useMemo(
+    () => new Set(visiblePoints.map((point) => point.id)),
+    [visiblePoints],
   )
 
   const pointRadiusMap = useMemo(
@@ -1150,9 +1191,18 @@ function App() {
     }
   }, [chartSize, axisLabelOffsets])
 
+  const visibleConnections = useMemo(
+    () =>
+      connections.filter(
+        (connection) =>
+          visiblePointIds.has(connection.fromId) && visiblePointIds.has(connection.toId),
+      ),
+    [connections, visiblePointIds],
+  )
+
   const sourcePointIds = useMemo(
-    () => new Set(connections.map((connection) => connection.fromId)),
-    [connections],
+    () => new Set(visibleConnections.map((connection) => connection.fromId)),
+    [visibleConnections],
   )
 
   const sortedPoints = useMemo(() => {
@@ -1188,15 +1238,8 @@ function App() {
   )
 
   const arrowLayouts = useMemo(
-    () => buildArrowLayouts(
-      connections.filter(
-        (connection) =>
-          visiblePoints.some((point) => point.id === connection.fromId) &&
-          visiblePoints.some((point) => point.id === connection.toId),
-      ),
-      pointScreenMap,
-    ),
-    [connections, pointScreenMap, visiblePoints],
+    () => buildArrowLayouts(visibleConnections, pointScreenMap),
+    [visibleConnections, pointScreenMap],
   )
 
   const getCurrentGraphState = () =>
@@ -1205,6 +1248,8 @@ function App() {
       connections,
       labelOffsets,
       axisLabelOffsets,
+      quadrantVisibility,
+      showConnectedOnly,
       showSecondaryQuadrants,
     })
 
@@ -1217,6 +1262,8 @@ function App() {
     setConnections(normalized.connections)
     setLabelOffsets(normalized.labelOffsets)
     setAxisLabelOffsets(normalized.axisLabelOffsets)
+    setQuadrantVisibility(normalized.quadrantVisibility)
+    setShowConnectedOnly(normalized.showConnectedOnly)
     setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
     setArrowForm(EMPTY_ARROW_FORM)
     setActiveLabelId(null)
@@ -1556,6 +1603,14 @@ function App() {
     setPoints((current) =>
       current.map((point) => (point.id === id ? { ...point, visible } : point)),
     )
+  }
+
+  const handleQuadrantVisibilityChange = (quadrant, visible) => {
+    setActiveSavedGraphId(null)
+    setQuadrantVisibility((current) => ({
+      ...current,
+      [quadrant]: visible,
+    }))
   }
 
   const handleAddArrow = (event) => {
@@ -1914,6 +1969,36 @@ function App() {
                 />
                 <span>2차 사분면 표시</span>
               </label>
+
+              <label className="toggle-field">
+                <input
+                  type="checkbox"
+                  checked={showConnectedOnly}
+                  onChange={(event) => {
+                    setActiveSavedGraphId(null)
+                    setShowConnectedOnly(event.target.checked)
+                  }}
+                />
+                <span>화살표 연결된 점만 표시</span>
+              </label>
+
+              <div className="quadrant-filter-group">
+                <span className="quadrant-filter-title">사분면 표시</span>
+                <div className="quadrant-filter-grid">
+                  {[1, 2, 3, 4].map((quadrant) => (
+                    <label key={quadrant} className="toggle-field quadrant-toggle">
+                      <input
+                        type="checkbox"
+                        checked={quadrantVisibility[quadrant] !== false}
+                        onChange={(event) =>
+                          handleQuadrantVisibilityChange(quadrant, event.target.checked)
+                        }
+                      />
+                      <span>{quadrant}사분면</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
 
               <button type="submit">점 추가</button>
               <button type="button" className="secondary-button" onClick={handleDownload}>

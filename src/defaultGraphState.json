@@ -1,6 +1,6 @@
 {
-  "name": "3차",
-  "exportedAt": "2026-04-09T07:05:17.150Z",
+  "name": "ver.4",
+  "exportedAt": "2026-04-09T07:49:09.289Z",
   "state": {
     "points": [
       {
@@ -616,14 +616,21 @@
     },
     "axisLabelOffsets": {
       "top": {
-        "x": 44,
-        "y": 375
+        "x": 41.99972190380379,
+        "y": 40.91734692157123
       },
       "left": {
-        "x": 749,
-        "y": -30
+        "x": 2.8962701188081468,
+        "y": -0.9928235351065382
       }
     },
+    "quadrantVisibility": {
+      "1": true,
+      "2": true,
+      "3": true,
+      "4": true
+    },
+    "showConnectedOnly": false,
     "showSecondaryQuadrants": true
   }
 }
