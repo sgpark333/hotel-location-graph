@@ -201,6 +201,7 @@ function normalizeGraphState(state) {
           }
         : DEFAULT_QUADRANT_VISIBILITY,
     showConnectedOnly: Boolean(state.showConnectedOnly),
+    showMovingQuadrantOnly: Boolean(state.showMovingQuadrantOnly),
     showSecondaryQuadrants: Boolean(state.showSecondaryQuadrants),
   }
 }
@@ -1129,6 +1130,9 @@ function App() {
   const [showConnectedOnly, setShowConnectedOnly] = useState(
     () => initialGraphStateRef.current.showConnectedOnly ?? false,
   )
+  const [showMovingQuadrantOnly, setShowMovingQuadrantOnly] = useState(
+    () => initialGraphStateRef.current.showMovingQuadrantOnly ?? false,
+  )
   const [errorMessage, setErrorMessage] = useState('')
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
@@ -1257,9 +1261,42 @@ function App() {
     [points, connections],
   )
 
+  const movingQuadrantConnectionIds = useMemo(
+    () =>
+      new Set(
+        connections
+          .filter((connection) => {
+            const fromPoint = points.find((point) => point.id === connection.fromId)
+            const toPoint = points.find((point) => point.id === connection.toId)
+
+            if (!fromPoint || !toPoint) {
+              return false
+            }
+
+            return getPrimaryQuadrant(fromPoint.x, fromPoint.y) !== getPrimaryQuadrant(toPoint.x, toPoint.y)
+          })
+          .map((connection) => connection.id),
+      ),
+    [connections, points],
+  )
+
+  const movingQuadrantPointIds = useMemo(
+    () =>
+      new Set(
+        connections
+          .filter((connection) => movingQuadrantConnectionIds.has(connection.id))
+          .flatMap((connection) => [connection.fromId, connection.toId]),
+      ),
+    [connections, movingQuadrantConnectionIds],
+  )
+
   const visiblePoints = useMemo(
     () =>
       points.filter((point) => {
+        if (showMovingQuadrantOnly) {
+          return movingQuadrantPointIds.has(point.id)
+        }
+
         if (showConnectedOnly) {
           return connectedPointIds.has(point.id)
         }
@@ -1269,7 +1306,7 @@ function App() {
           quadrantVisibility[getQuadrant(point)] !== false
         )
       }),
-    [points, quadrantVisibility, showConnectedOnly, connectedPointIds],
+    [points, quadrantVisibility, showConnectedOnly, showMovingQuadrantOnly, connectedPointIds, movingQuadrantPointIds],
   )
 
   const visibleDisplayPoints = useMemo(
@@ -1308,11 +1345,14 @@ function App() {
 
   const visibleConnections = useMemo(
     () =>
-      connections.filter(
-        (connection) =>
-          visiblePointIds.has(connection.fromId) && visiblePointIds.has(connection.toId),
-      ),
-    [connections, visiblePointIds],
+      connections.filter((connection) => {
+        if (showMovingQuadrantOnly && !movingQuadrantConnectionIds.has(connection.id)) {
+          return false
+        }
+
+        return visiblePointIds.has(connection.fromId) && visiblePointIds.has(connection.toId)
+      }),
+    [connections, visiblePointIds, showMovingQuadrantOnly, movingQuadrantConnectionIds],
   )
 
   const sourcePointIds = useMemo(
@@ -1382,6 +1422,7 @@ function App() {
       axisLabelOffsets,
       quadrantVisibility,
       showConnectedOnly,
+      showMovingQuadrantOnly,
       showSecondaryQuadrants,
     })
 
@@ -1396,6 +1437,7 @@ function App() {
     setAxisLabelOffsets(normalized.axisLabelOffsets)
     setQuadrantVisibility(normalized.quadrantVisibility)
     setShowConnectedOnly(normalized.showConnectedOnly)
+    setShowMovingQuadrantOnly(normalized.showMovingQuadrantOnly)
     setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
     setArrowForm(EMPTY_ARROW_FORM)
     setActiveLabelId(null)
@@ -1942,17 +1984,29 @@ function App() {
                     <span>2차 사분면 표시</span>
                   </label>
 
-                  <label className="toggle-field">
-                    <input
-                      type="checkbox"
-                      checked={showConnectedOnly}
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={showConnectedOnly}
                       onChange={(event) => {
                         setActiveSavedGraphId(null)
                         setShowConnectedOnly(event.target.checked)
                       }}
                     />
-                    <span>화살표 연결된 점만 표시</span>
-                  </label>
+                      <span>화살표 연결된 점만 표시</span>
+                    </label>
+
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={showMovingQuadrantOnly}
+                        onChange={(event) => {
+                          setActiveSavedGraphId(null)
+                          setShowMovingQuadrantOnly(event.target.checked)
+                        }}
+                      />
+                      <span>분면 이동 점만 표시</span>
+                    </label>
 
                   <div className="quadrant-filter-group">
                     <div className="quadrant-filter-header">
