@@ -17,6 +17,8 @@ const X_DOMAIN = [-7.2, 7.2]
 const Y_DOMAIN = [0, 36]
 const X_TICKS = [-7.2, -3.6, 0, 3.6, 7.2]
 const Y_TICKS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36]
+const PRIMARY_AXIS_X = 0
+const PRIMARY_AXIS_Y = 18
 const SUB_QUADRANT_X = [-3.5, 3.5]
 const SUB_QUADRANT_Y = [9, 27]
 const CHART_MARGIN = { top: 18, right: 8, bottom: -6, left: -48 }
@@ -559,81 +561,85 @@ function getCandidateDistance(point, candidate) {
   return Math.hypot(anchorX - point.x, anchorY - point.y)
 }
 
-function getQuadrant(point) {
-  if (point.x >= 0 && point.y >= 18) {
+function getPrimaryQuadrant(x, y) {
+  const isRight = x >= PRIMARY_AXIS_X
+  const isTop = y >= PRIMARY_AXIS_Y
+
+  if (isRight && isTop) {
     return 1
   }
 
-  if (point.x < 0 && point.y >= 18) {
+  if (!isRight && isTop) {
     return 2
   }
 
-  if (point.x < 0 && point.y < 18) {
+  if (!isRight && !isTop) {
     return 3
   }
 
   return 4
 }
 
-function getPrimaryQuadrantLabel(point) {
-  return `${getQuadrant(point)}사분면`
+function getSecondaryBands(x, y) {
+  const primaryQuadrant = getPrimaryQuadrant(x, y)
+  const splitX = primaryQuadrant === 1 || primaryQuadrant === 4
+    ? SUB_QUADRANT_X[1]
+    : SUB_QUADRANT_X[0]
+
+  const splitY = primaryQuadrant === 1 || primaryQuadrant === 2
+    ? SUB_QUADRANT_Y[1]
+    : SUB_QUADRANT_Y[0]
+
+  const isRightOfSplit = x >= splitX
+  const isAboveSplit = y >= splitY
+
+  return {
+    primaryQuadrant,
+    isRightOfSplit,
+    isAboveSplit,
+  }
 }
 
-function getSecondaryQuadrantLabel(point) {
-  const primaryQuadrant = getQuadrant(point)
-  const secondaryQuadrant = getSecondaryQuadrantNumber(point)
+function getSecondaryQuadrant(x, y) {
+  const { primaryQuadrant, isRightOfSplit, isAboveSplit } = getSecondaryBands(x, y)
 
-  return `${primaryQuadrant}-${secondaryQuadrant} 사분면`
+  let secondary = 4
+
+  if (isRightOfSplit && isAboveSplit) {
+    secondary = 1
+  } else if (!isRightOfSplit && isAboveSplit) {
+    secondary = 2
+  } else if (!isRightOfSplit && !isAboveSplit) {
+    secondary = 3
+  }
+
+  return {
+    primary: primaryQuadrant,
+    secondary,
+  }
+}
+
+function getQuadrantLabel(x, y, showSecondaryQuadrants) {
+  const primaryQuadrant = getPrimaryQuadrant(x, y)
+
+  if (!showSecondaryQuadrants) {
+    return `${primaryQuadrant}사분면`
+  }
+
+  const secondaryQuadrant = getSecondaryQuadrant(x, y)
+  return `${secondaryQuadrant.primary}-${secondaryQuadrant.secondary} 사분면`
+}
+
+function getQuadrant(point) {
+  return getPrimaryQuadrant(point.x, point.y)
 }
 
 function getSecondaryQuadrantNumber(point) {
-  const primaryQuadrant = getQuadrant(point)
-
-  const horizontalIndex = point.x < 0
-    ? point.x < -3.5 ? 1 : 2
-    : point.x < 3.5 ? 1 : 2
-
-  const verticalIndex = point.y < 18
-    ? point.y < 9 ? 2 : 1
-    : point.y < 27 ? 2 : 1
-
-  const secondaryIndexByQuadrant = {
-    1: {
-      '2-1': 1,
-      '1-1': 2,
-      '1-2': 3,
-      '2-2': 4,
-    },
-    2: {
-      '1-2': 3,
-      '1-1': 1,
-      '2-2': 2,
-      '2-1': 4,
-    },
-    3: {
-      '1-2': 1,
-      '2-2': 2,
-      '2-1': 3,
-      '1-1': 4,
-    },
-    4: {
-      '2-2': 1,
-      '2-1': 2,
-      '1-1': 3,
-      '1-2': 4,
-    },
-  }
-
-  const secondaryIndex =
-    secondaryIndexByQuadrant[primaryQuadrant][`${horizontalIndex}-${verticalIndex}`]
-
-  return secondaryIndex
+  return getSecondaryQuadrant(point.x, point.y).secondary
 }
 
 function getPointLocationLabel(point, showSecondaryQuadrants) {
-  return showSecondaryQuadrants
-    ? `위치 : ${getSecondaryQuadrantLabel(point)}`
-    : `위치 : ${getPrimaryQuadrantLabel(point)}`
+  return `위치 : ${getQuadrantLabel(point.x, point.y, showSecondaryQuadrants)}`
 }
 
 function getAnalyzeQuadrantGroups(points, showSecondaryQuadrants) {
@@ -802,11 +808,11 @@ function buildGuideLines(chartSize, showSecondaryQuadrants) {
 
   return {
     vertical: [
-      metrics.toX(0),
+      metrics.toX(PRIMARY_AXIS_X),
       ...(showSecondaryQuadrants ? SUB_QUADRANT_X.map((value) => metrics.toX(value)) : []),
     ],
     horizontal: [
-      metrics.toY(18),
+      metrics.toY(PRIMARY_AXIS_Y),
       ...(showSecondaryQuadrants ? SUB_QUADRANT_Y.map((value) => metrics.toY(value)) : []),
     ],
   }
@@ -1293,10 +1299,10 @@ function App() {
     const metrics = buildPlotMetrics(chartSize)
 
     return {
-      topX: metrics.toX(0) + (axisLabelOffsets.top?.x ?? 0),
+      topX: metrics.toX(PRIMARY_AXIS_X) + (axisLabelOffsets.top?.x ?? 0),
       topY: Math.max(8, CHART_MARGIN.top - 20) + (axisLabelOffsets.top?.y ?? 0),
       leftX: Math.max(10, CHART_MARGIN.left - 16) + (axisLabelOffsets.left?.x ?? 0),
-      leftY: metrics.toY(18) + (axisLabelOffsets.left?.y ?? 0),
+      leftY: metrics.toY(PRIMARY_AXIS_Y) + (axisLabelOffsets.left?.y ?? 0),
     }
   }, [chartSize, axisLabelOffsets])
 
@@ -2063,8 +2069,8 @@ function App() {
                       strokeWidth={1}
                     />
                   ))}
-                <ReferenceLine x={0} stroke="#000000" strokeWidth={2} />
-                <ReferenceLine y={18} stroke="#000000" strokeWidth={2} />
+                <ReferenceLine x={PRIMARY_AXIS_X} stroke="#000000" strokeWidth={2} />
+                <ReferenceLine y={PRIMARY_AXIS_Y} stroke="#000000" strokeWidth={2} />
                 <Scatter
                   data={visibleDisplayPoints}
                   shape={(props) => (
