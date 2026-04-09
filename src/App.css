@@ -172,6 +172,12 @@
   min-width: 0;
 }
 
+.arrow-form-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .point-list {
   height: 100%;
   box-sizing: border-box;
@@ -183,7 +189,7 @@
 }
 
 .arrow-list {
-  max-height: 220px;
+  max-height: 110px;
   overflow: auto;
 }
 
@@ -268,7 +274,7 @@
   padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   flex: 1 1 auto;
   min-height: 0;
   box-sizing: border-box;
@@ -338,6 +344,14 @@
   margin: 0;
   display: grid;
   gap: 8px;
+}
+
+.saved-graph-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .point-list li,
