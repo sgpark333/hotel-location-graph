@@ -10,11 +10,12 @@ import {
   YAxis,
 } from 'recharts'
 import * as XLSX from 'xlsx'
+import defaultGraphStateData from './defaultGraphState.json'
 import './App.css'
 
-const X_DOMAIN = [-7, 7]
+const X_DOMAIN = [-7.2, 7.2]
 const Y_DOMAIN = [0, 36]
-const X_TICKS = [-7, -3.5, 0, 3.5, 7]
+const X_TICKS = [-7.2, -3.6, 0, 3.6, 7.2]
 const Y_TICKS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36]
 const SUB_QUADRANT_X = [-3.5, 3.5]
 const SUB_QUADRANT_Y = [9, 27]
@@ -71,52 +72,7 @@ const SORT_OPTIONS = {
   quadrantAsc: 'quadrantAsc',
   quadrantDesc: 'quadrantDesc',
 }
-
-const DEFAULT_POINT_ROWS = [
-  ['반얀트리', -5.79, 35.42],
-  ['포레스타 불광', -4.4, 15.05],
-  ['페어필드', -5.51, 19.14],
-  ['AC메리어트', -5.55, 19.29],
-  ['소노캄 고양', -3.72, 23.44],
-  ['토요코인 강남', -4.95, 26.25],
-  ['토요코인 동대문', -4.98, 28],
-  ['포포인츠', -5.75, 14.41],
-  ['로카우스', -3.51, 20.49],
-  ['더윈', -2.74, 12.25],
-  ['클라움', -4.2, 10.85],
-  ['라마다 남대문', -2.16, 6.65],
-  ['밀레니엄', -3.92, 10.5],
-  ['인나인', -2.6, 15.1],
-  ['베이튼', -2.79, 7],
-  ['블루오션', -1.58, 11.2],
-  ['아비숑', -2.32, 10.5],
-  ['오클라우드', -1.59, 12.25],
-  ['홀리데이 인 홍대', -2.63, 11.55],
-  ['그랜드 인터컨티넨탈', -2.1, 34.75],
-  ['오크우드', -1.54, 13.37],
-  ['워커힐', -2.02, 29.88],
-  ['테이크', -3.49, 27.74],
-  ['G1', -1.09, 10.15],
-  ['G2', -2.17, 10.15],
-  ['G3', -2.26, 15.05],
-  ['밀리오레', -3.76, 19.25],
-  ['에이든', -1.29, 10.46],
-  ['페이토 강남', -2.11, 16.88],
-  ['베르누이', -2.65, 9.81],
-  ['안토', -0.22, 21.82],
-  ['페이토 삼성', -1.92, 7.38],
-  ['임피리얼 강남', 0.28, 27.73],
-  ['아난티 앳 강남', -0.79, 21.62],
-  ['보코', 1.33, 18.64],
-  ['호텔 스타', 1.58, 13.3],
-  ['호텔 스테이', 1.78, 13.3],
-  ['드립앤드롭', 2.52, 16.15],
-  ['에어스카이', 2.51, 10.5],
-  ['인더시티 남산', 3.31, 14],
-  ['인더시티 명동', 3.27, 14],
-  ['더 플라자', 5.41, 20.38],
-  ['서교타운', 7, 9.1],
-]
+const DEFAULT_GRAPH_STATE = defaultGraphStateData.state
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max)
@@ -132,19 +88,8 @@ function createPoint(name, x, y, color) {
   }
 }
 
-function createDefaultPoints() {
-  return DEFAULT_POINT_ROWS.map(([name, x, y], index) =>
-    createPoint(name, x, y, DEFAULT_COLORS[index % DEFAULT_COLORS.length]),
-  )
-}
-
 function createDefaultGraphState() {
-  return {
-    points: createDefaultPoints(),
-    connections: [],
-    labelOffsets: {},
-    showSecondaryQuadrants: false,
-  }
+  return cloneGraphState(DEFAULT_GRAPH_STATE)
 }
 
 function cloneGraphState(state) {
@@ -993,8 +938,6 @@ function PointShape(props) {
         cy={cy}
         r={radius}
         fill={payload.color}
-        stroke="#ffffff"
-        strokeWidth="1.5"
       />
     </g>
   )
@@ -1393,6 +1336,39 @@ function App() {
     setSavedGraphs((current) => [nextPreset, ...current])
     setSavedGraphName('')
     setErrorMessage('현재 그래프를 저장 목록에 추가했습니다.')
+  }
+
+  const handleExportGraphSettings = async () => {
+    const selectedPreset = savedGraphs.find((item) => item.id === activeSavedGraphId)
+    const exportPayload = {
+      name: selectedPreset?.name || savedGraphName.trim() || '현재 세팅값',
+      exportedAt: new Date().toISOString(),
+      state: selectedPreset ? selectedPreset.state : getCurrentGraphState(),
+    }
+
+    const json = JSON.stringify(exportPayload, null, 2)
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(json)
+      }
+    } catch {
+      // Ignore clipboard errors and continue with file download.
+    }
+
+    try {
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const safeName = exportPayload.name.replace(/[\\/:*?"<>|]/g, '-')
+      link.href = url
+      link.download = `${safeName || 'graph-settings'}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      setErrorMessage('세팅값을 JSON으로 내보냈습니다.')
+    } catch {
+      setErrorMessage('세팅값 내보내기에 실패했습니다.')
+    }
   }
 
   const handleSavedGraphToggle = (id, checked) => {
@@ -1967,6 +1943,9 @@ function App() {
                   </label>
                   <button type="button" className="secondary-button" onClick={handleSaveGraphPreset}>
                     변경사항 저장
+                  </button>
+                  <button type="button" className="secondary-button" onClick={handleExportGraphSettings}>
+                    세팅값 내보내기
                   </button>
                 </div>
 
