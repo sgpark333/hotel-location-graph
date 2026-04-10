@@ -157,12 +157,17 @@ function normalizeGraphState(state) {
   return {
     points,
     connections: Array.isArray(state.connections)
-      ? state.connections.filter(
-          (connection) =>
-            connection?.id &&
-            pointIds.has(connection.fromId) &&
-            pointIds.has(connection.toId),
-        )
+      ? state.connections
+          .filter(
+            (connection) =>
+              connection?.id &&
+              pointIds.has(connection.fromId) &&
+              pointIds.has(connection.toId),
+          )
+          .map((connection) => ({
+            ...connection,
+            visible: connection.visible !== false,
+          }))
       : [],
     labelOffsets:
       state.labelOffsets && typeof state.labelOffsets === 'object'
@@ -1346,6 +1351,10 @@ function App() {
   const visibleConnections = useMemo(
     () =>
       connections.filter((connection) => {
+        if (connection.visible === false) {
+          return false
+        }
+
         if (showMovingQuadrantOnly && !movingQuadrantConnectionIds.has(connection.id)) {
           return false
         }
@@ -1353,6 +1362,27 @@ function App() {
         return visiblePointIds.has(connection.fromId) && visiblePointIds.has(connection.toId)
       }),
     [connections, visiblePointIds, showMovingQuadrantOnly, movingQuadrantConnectionIds],
+  )
+
+  const connectionListItems = useMemo(
+    () =>
+      connections
+        .map((connection) => {
+          const fromPoint = points.find((point) => point.id === connection.fromId)
+          const toPoint = points.find((point) => point.id === connection.toId)
+
+          if (!fromPoint || !toPoint) {
+            return null
+          }
+
+          return {
+            ...connection,
+            fromName: fromPoint.name,
+            toName: toPoint.name,
+          }
+        })
+        .filter(Boolean),
+    [connections, points],
   )
 
   const sourcePointIds = useMemo(
@@ -1823,6 +1853,7 @@ function App() {
         fromId: arrowForm.fromId,
         toId: arrowForm.toId,
         color: DEFAULT_ARROW_COLOR,
+        visible: true,
       },
     ])
     setArrowForm(EMPTY_ARROW_FORM)
@@ -1832,6 +1863,15 @@ function App() {
   const handleDeleteArrow = (id) => {
     setActiveSavedGraphId(null)
     setConnections((current) => current.filter((connection) => connection.id !== id))
+  }
+
+  const handleArrowVisibilityChange = (id, visible) => {
+    setActiveSavedGraphId(null)
+    setConnections((current) =>
+      current.map((connection) =>
+        connection.id === id ? { ...connection, visible } : connection,
+      ),
+    )
   }
 
   const handleDownload = async () => {
@@ -2374,8 +2414,18 @@ function App() {
 
                 <section className="arrow-list">
                   <ul>
-                    {arrowLayouts.map((arrow) => (
+                    {connectionListItems.map((arrow) => (
                       <li key={arrow.id}>
+                        <label className="point-check">
+                          <input
+                            type="checkbox"
+                            checked={arrow.visible !== false}
+                            onChange={(event) =>
+                              handleArrowVisibilityChange(arrow.id, event.target.checked)
+                            }
+                            aria-label={`${arrow.fromName}에서 ${arrow.toName} 연결 표시`}
+                          />
+                        </label>
                         <span>
                           {arrow.fromName} → {arrow.toName}
                         </span>

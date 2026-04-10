@@ -687,6 +687,11 @@
   color: #52616b;
 }
 
+.arrow-list span {
+  flex: 1;
+  min-width: 0;
+}
+
 .point-actions {
   display: flex;
   align-items: center;
