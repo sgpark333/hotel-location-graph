@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import * as XLSX from 'xlsx'
 import defaultGraphStateData from './defaultGraphState.json'
+import { supabase } from './lib/supabaseClient'
 import './App.css'
 
 const X_DOMAIN = [-7.2, 7.2]
@@ -44,8 +45,8 @@ const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
 const MAX_LABEL_FREE_DISTANCE = 20
 const LEADER_REQUIRED_DISTANCE = 3
-const DEFAULT_GRAPH_STATE_KEY = 'quadrant-graph-default-state-v7'
-const SAVED_GRAPHS_KEY = 'quadrant-graph-saved-states'
+const STATE_HISTORY_LIMIT = 20
+const CURRENT_STATE_ROW_ID = 1
 const DEFAULT_COLORS = [
   '#264653',
   '#2a9d8f',
@@ -216,49 +217,15 @@ function normalizeGraphState(state) {
     showConnectedOnly: Boolean(state.showConnectedOnly),
     showMovingQuadrantOnly: Boolean(state.showMovingQuadrantOnly),
     showSecondaryQuadrants: Boolean(state.showSecondaryQuadrants),
-  }
-}
-
-function readStorageJson(key, fallback) {
-  if (typeof window === 'undefined') {
-    return fallback
-  }
-
-  try {
-    const stored = window.localStorage.getItem(key)
-    return stored ? JSON.parse(stored) : fallback
-  } catch {
-    return fallback
+    pointSortOrder: Object.values(SORT_OPTIONS).includes(state.pointSortOrder)
+      ? state.pointSortOrder
+      : SORT_OPTIONS.nameAsc,
+    pointSearchQuery: String(state.pointSearchQuery ?? ''),
   }
 }
 
 function getInitialGraphState() {
-  return normalizeGraphState(readStorageJson(DEFAULT_GRAPH_STATE_KEY, DEFAULT_GRAPH_STATE))
-}
-
-function getInitialSavedGraphs() {
-  const saved = readStorageJson(SAVED_GRAPHS_KEY, [])
-
-  if (!Array.isArray(saved)) {
-    return []
-  }
-
-  return saved
-    .map((item, index) => {
-      const name = String(item?.name ?? '').trim()
-
-      if (!item?.id || !name) {
-        return null
-      }
-
-      return {
-        id: item.id,
-        name,
-        state: normalizeGraphState(item.state),
-        createdAt: item.createdAt || Date.now() + index,
-      }
-    })
-    .filter(Boolean)
+  return normalizeGraphState(DEFAULT_GRAPH_STATE)
 }
 
 function wrapLabelText(value) {
@@ -1115,14 +1082,9 @@ function PointShape(props) {
 
 function App() {
   const initialGraphStateRef = useRef(null)
-  const initialSavedGraphsRef = useRef(null)
 
   if (!initialGraphStateRef.current) {
     initialGraphStateRef.current = getInitialGraphState()
-  }
-
-  if (!initialSavedGraphsRef.current) {
-    initialSavedGraphsRef.current = getInitialSavedGraphs()
   }
 
   const chartRef = useRef(null)
@@ -1130,6 +1092,7 @@ function App() {
   const chartSizeRef = useRef({ width: 0, height: 0 })
   const dragStateRef = useRef(null)
   const activeLabelRef = useRef(null)
+  const lastAppliedRemoteUpdatedAtRef = useRef(null)
   const [points, setPoints] = useState(() => initialGraphStateRef.current.points)
   const [connections, setConnections] = useState(() => initialGraphStateRef.current.connections)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -1156,24 +1119,25 @@ function App() {
       left: { x: 0, y: 0 },
     },
   )
-  const [savedGraphs, setSavedGraphs] = useState(() => initialSavedGraphsRef.current)
-  const [savedGraphName, setSavedGraphName] = useState('')
-  const [activeSavedGraphId, setActiveSavedGraphId] = useState(null)
+  const [currentSavedState, setCurrentSavedState] = useState(() =>
+    cloneGraphState(initialGraphStateRef.current),
+  )
+  const [stateHistory, setStateHistory] = useState([])
   const [dragState, setDragState] = useState(null)
   const [activeLabelId, setActiveLabelId] = useState(null)
   const [debugLabelEvent, setDebugLabelEvent] = useState('idle')
-  const [pointSortOrder, setPointSortOrder] = useState(SORT_OPTIONS.nameAsc)
-  const [pointSearchQuery, setPointSearchQuery] = useState('')
+  const [pointSortOrder, setPointSortOrder] = useState(
+    () => initialGraphStateRef.current.pointSortOrder ?? SORT_OPTIONS.nameAsc,
+  )
+  const [pointSearchQuery, setPointSearchQuery] = useState(
+    () => initialGraphStateRef.current.pointSearchQuery ?? '',
+  )
   const [isDisplayPanelOpen, setIsDisplayPanelOpen] = useState(false)
   const [activeTab, setActiveTab] = useState(TAB_OPTIONS.dashboard)
+  const [isRemoteHydrating, setIsRemoteHydrating] = useState(true)
+  const [hasRemoteUpdate, setHasRemoteUpdate] = useState(false)
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SAVED_GRAPHS_KEY, JSON.stringify(savedGraphs))
-    } catch {
-      // Ignore local storage issues.
-    }
-  }, [savedGraphs])
+  const setActiveSavedGraphId = () => {}
 
   useEffect(() => {
     if (!chartWrapRef.current) {
@@ -1204,6 +1168,74 @@ function App() {
   useEffect(() => {
     chartSizeRef.current = chartSize
   }, [chartSize])
+
+  useEffect(() => {
+    let isMounted = true
+
+    const loadInitialRemoteState = async () => {
+      const latestState = await fetchCurrentStateFromDb()
+
+      if (!isMounted) {
+        return
+      }
+
+      if (latestState?.state) {
+        applyGraphState(latestState.state, {
+          message: '',
+          debugLabel: 'remote-state-loaded',
+        })
+        setCurrentSavedState(cloneGraphState(latestState.state))
+        lastAppliedRemoteUpdatedAtRef.current = latestState.updatedAt
+      }
+
+      setIsRemoteHydrating(false)
+    }
+
+    loadInitialRemoteState()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!supabase) {
+      return undefined
+    }
+
+    const channel = supabase
+      .channel('current-state-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'current_state',
+          filter: `id=eq.${CURRENT_STATE_ROW_ID}`,
+        },
+        (payload) => {
+          const updatedAt = payload.new?.updated_at
+
+          if (!updatedAt) {
+            return
+          }
+
+          if (
+            lastAppliedRemoteUpdatedAtRef.current &&
+            new Date(updatedAt).getTime() <= new Date(lastAppliedRemoteUpdatedAtRef.current).getTime()
+          ) {
+            return
+          }
+
+          setHasRemoteUpdate(true)
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [])
 
   useEffect(() => {
     setConnections((current) =>
@@ -1470,6 +1502,37 @@ function App() {
     [connections],
   )
 
+  const fetchCurrentStateFromDb = async () => {
+    if (!supabase) {
+      return null
+    }
+
+    const { data, error } = await supabase
+      .from('current_state')
+      .select('data, updated_at')
+      .eq('id', CURRENT_STATE_ROW_ID)
+      .single()
+
+    if (error) {
+      console.error('Failed to fetch current_state', error)
+      return null
+    }
+
+    if (!data?.data) {
+      return null
+    }
+
+    try {
+      return {
+        state: normalizeGraphState(data.data),
+        updatedAt: data.updated_at ?? null,
+      }
+    } catch (parseError) {
+      console.error('Failed to normalize current_state payload', parseError)
+      return null
+    }
+  }
+
   const getCurrentGraphState = () =>
     cloneGraphState({
       points,
@@ -1480,6 +1543,21 @@ function App() {
       showConnectedOnly,
       showMovingQuadrantOnly,
       showSecondaryQuadrants,
+      pointSortOrder,
+      pointSearchQuery,
+      displayOptions: {
+        showConnectedOnly,
+        showMovingQuadrantOnly,
+        showSecondaryQuadrants,
+        quadrantVisibility,
+      },
+      quadrantConfig: {
+        primaryAxisX: PRIMARY_AXIS_X,
+        primaryAxisY: PRIMARY_AXIS_Y,
+        subQuadrantX: SUB_QUADRANT_X,
+        subQuadrantY: SUB_QUADRANT_Y,
+      },
+      groupColorMap: buildDisplayColorMap(points, connections),
     })
 
   const applyGraphState = (graphState, options = {}) => {
@@ -1495,10 +1573,11 @@ function App() {
     setShowConnectedOnly(normalized.showConnectedOnly)
     setShowMovingQuadrantOnly(normalized.showMovingQuadrantOnly)
     setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
+    setPointSortOrder(normalized.pointSortOrder ?? SORT_OPTIONS.nameAsc)
+    setPointSearchQuery(normalized.pointSearchQuery ?? '')
     setArrowForm(EMPTY_ARROW_FORM)
     setActiveLabelId(null)
     setDragState(null)
-    setActiveSavedGraphId(options.activeSavedGraphId ?? null)
     setErrorMessage(options.message ?? '')
     setDebugLabelEvent(options.debugLabel ?? 'graph-state-loaded')
   }
@@ -1673,91 +1752,80 @@ function App() {
     })
   }
 
-  const handleSaveCurrentAsDefault = () => {
-    try {
-      window.localStorage.setItem(DEFAULT_GRAPH_STATE_KEY, JSON.stringify(getCurrentGraphState()))
-      setErrorMessage('현재 그래프 상태를 기본값으로 저장했습니다.')
-    } catch {
-      setErrorMessage('기본값 저장에 실패했습니다.')
-    }
-  }
+  const saveCurrentState = async () => {
+    const nextState = getCurrentGraphState()
+    const nextUpdatedAt = new Date().toISOString()
 
-  const handleSaveGraphPreset = () => {
-    const trimmedName = savedGraphName.trim()
-    const nextPreset = {
-      id: crypto.randomUUID(),
-      name: trimmedName || `저장본 ${savedGraphs.length + 1}`,
-      state: getCurrentGraphState(),
-      createdAt: Date.now(),
-    }
-
-    setSavedGraphs((current) => [nextPreset, ...current])
-    setSavedGraphName('')
-    setErrorMessage('현재 그래프를 저장 목록에 추가했습니다.')
-  }
-
-  const handleExportGraphSettings = async () => {
-    const selectedPreset = savedGraphs.find((item) => item.id === activeSavedGraphId)
-    const exportPayload = {
-      name: selectedPreset?.name || savedGraphName.trim() || '현재 세팅값',
-      exportedAt: new Date().toISOString(),
-      state: selectedPreset ? selectedPreset.state : getCurrentGraphState(),
-    }
-
-    const json = JSON.stringify(exportPayload, null, 2)
-
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(json)
+    setStateHistory((current) => {
+      if (!currentSavedState) {
+        return current
       }
-    } catch {
-      // Ignore clipboard errors and continue with file download.
+
+      const nextHistoryEntry = {
+        id: crypto.randomUUID(),
+        savedAt: Date.now(),
+        state: cloneGraphState(currentSavedState),
+      }
+
+      return [nextHistoryEntry, ...current].slice(0, STATE_HISTORY_LIMIT)
+    })
+    setCurrentSavedState(nextState)
+    setHasRemoteUpdate(false)
+    lastAppliedRemoteUpdatedAtRef.current = nextUpdatedAt
+
+    if (!supabase) {
+      console.error('Supabase client is not configured')
+      setErrorMessage('Supabase 설정이 없어 로컬 상태만 저장했습니다.')
+      return
     }
 
-    try {
-      const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      const safeName = exportPayload.name.replace(/[\\/:*?"<>|]/g, '-')
-      link.href = url
-      link.download = `${safeName || 'graph-settings'}.json`
-      link.click()
-      URL.revokeObjectURL(url)
-      setErrorMessage('세팅값을 JSON으로 내보냈습니다.')
-    } catch {
-      setErrorMessage('세팅값 내보내기에 실패했습니다.')
+    const { error } = await supabase
+      .from('current_state')
+      .update({
+        data: nextState,
+        updated_at: nextUpdatedAt,
+      })
+      .eq('id', CURRENT_STATE_ROW_ID)
+
+    if (error) {
+      console.error('Failed to save current_state', error)
+      setErrorMessage('저장 실패: 콘솔 로그를 확인해주세요.')
+      return
     }
+
+    setErrorMessage('현재 상태를 저장했습니다.')
   }
 
-  const handleSavedGraphToggle = (id, checked) => {
-    if (!checked) {
-      setActiveSavedGraphId(null)
+  const rollbackToLastState = () => {
+    if (!stateHistory.length) {
+      setErrorMessage('복구할 이전 상태가 없습니다.')
       return
     }
 
-    const target = savedGraphs.find((item) => item.id === id)
-
-    if (!target) {
-      return
-    }
-
-    applyGraphState(target.state, {
-      activeSavedGraphId: id,
-      message: `${target.name} 불러옴`,
-      debugLabel: 'saved-graph-loaded',
+    const [latestHistory, ...restHistory] = stateHistory
+    setCurrentSavedState(cloneGraphState(latestHistory.state))
+    setStateHistory(restHistory)
+    applyGraphState(latestHistory.state, {
+      message: '마지막 저장 상태로 복구했습니다.',
+      debugLabel: 'state-rollback',
     })
   }
 
-  const handleSavedGraphRename = (id, name) => {
-    setSavedGraphs((current) =>
-      current.map((item) => (item.id === id ? { ...item, name } : item)),
-    )
-  }
+  const applyLatestRemoteState = async () => {
+    const latestState = await fetchCurrentStateFromDb()
 
-  const handleSavedGraphDelete = (id) => {
-    setSavedGraphs((current) => current.filter((item) => item.id !== id))
-    setActiveSavedGraphId((current) => (current === id ? null : current))
-    setErrorMessage('저장된 그래프를 삭제했습니다.')
+    if (!latestState?.state) {
+      setErrorMessage('최신 저장본을 불러오지 못했습니다.')
+      return
+    }
+
+    applyGraphState(latestState.state, {
+      message: '최신 저장본을 적용했습니다.',
+      debugLabel: 'remote-state-applied',
+    })
+    setCurrentSavedState(cloneGraphState(latestState.state))
+    setHasRemoteUpdate(false)
+    lastAppliedRemoteUpdatedAtRef.current = latestState.updatedAt
   }
 
   const handleChange = (event) => {
@@ -1997,6 +2065,14 @@ function App() {
     }
   }
 
+  if (isRemoteHydrating) {
+    return (
+      <main className="app-shell app-loading-shell">
+        <div className="app-loading-card">최신 상태를 불러오는 중...</div>
+      </main>
+    )
+  }
+
   return (
     <main className="app-shell">
       <nav className="top-tabs" aria-label="메인 메뉴">
@@ -2015,6 +2091,14 @@ function App() {
           Analyze
         </button>
       </nav>
+      {hasRemoteUpdate ? (
+        <div className="remote-update-banner">
+          <span>새 저장본이 있습니다</span>
+          <button type="button" className="secondary-button" onClick={applyLatestRemoteState}>
+            적용
+          </button>
+        </div>
+      ) : null}
       <section className="workspace">
         {activeTab === TAB_OPTIONS.dashboard ? (
         <>
@@ -2339,9 +2423,6 @@ function App() {
               <button type="button" className="secondary-button" onClick={handleDownload}>
                 그래프 이미지 다운로드
               </button>
-              <button type="button" className="secondary-button" onClick={handleSaveCurrentAsDefault}>
-                기본값 저장
-              </button>
               <label className="file-field">
                 <span>엑셀 업로드</span>
                 <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} />
@@ -2459,7 +2540,7 @@ function App() {
                     <input
                       value={points.find((point) => point.id === arrowForm.fromId)?.name ?? ''}
                       readOnly
-                      placeholder="호텔 리스트에서 선택"
+                      placeholder="호텔 리스트에서 시작점 선택"
                     />
                   </label>
 
@@ -2468,7 +2549,7 @@ function App() {
                     <input
                       value={points.find((point) => point.id === arrowForm.toId)?.name ?? ''}
                       readOnly
-                      placeholder="호텔 리스트에서 선택"
+                      placeholder="호텔 리스트에서 끝점 선택"
                     />
                   </label>
 
@@ -2477,6 +2558,7 @@ function App() {
                   </button>
                 </form>
 
+                <div className="arrow-list-header">연결된 호텔</div>
                 <section className="arrow-list">
                   <ul>
                     {connectionListItems.map((arrow) => (
@@ -2509,47 +2591,27 @@ function App() {
 
               <section className="saved-graph-panel">
                 <div className="saved-graph-form">
-                  <label>
-                    저장 이름
-                    <input
-                      value={savedGraphName}
-                      onChange={(event) => setSavedGraphName(event.target.value)}
-                      placeholder="예: 4월 1차 버전"
-                    />
-                  </label>
-                  <button type="button" className="secondary-button" onClick={handleSaveGraphPreset}>
-                    변경사항 저장
-                  </button>
-                  <button type="button" className="secondary-button" onClick={handleExportGraphSettings}>
-                    세팅값 내보내기
+                  <div className="saved-graph-header">
+                    <div>
+                      <strong>저장</strong>
+                      <span>최신 상태 1개만 유지하고, 이전 상태는 내부 히스토리로 백업됩니다.</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={rollbackToLastState}
+                    >
+                      마지막 복구
+                    </button>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={saveCurrentState}>
+                    현재 상태 저장
                   </button>
                 </div>
-
-                <ul className="saved-graph-list">
-                  {savedGraphs.map((item) => (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        className="saved-graph-load-button"
-                        onClick={() => handleSavedGraphToggle(item.id, activeSavedGraphId !== item.id)}
-                      >
-                        {activeSavedGraphId === item.id ? '불러옴' : '불러오기'}
-                      </button>
-                      <input
-                        className="saved-graph-name"
-                        value={item.name}
-                        onChange={(event) => handleSavedGraphRename(item.id, event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="delete-button"
-                        onClick={() => handleSavedGraphDelete(item.id)}
-                      >
-                        삭제
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="saved-graph-summary">
+                  <span>최신 저장 상태: {currentSavedState ? '있음' : '없음'}</span>
+                  <span>백업 히스토리: {stateHistory.length}개</span>
+                </div>
               </section>
             </div>
           </div>

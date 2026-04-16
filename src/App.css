@@ -5,6 +5,21 @@
   min-height: 100vh;
 }
 
+.app-loading-shell {
+  display: grid;
+  place-items: center;
+}
+
+.app-loading-card {
+  border: 1px solid #e4e8ec;
+  background: #fff;
+  border-radius: 16px;
+  padding: 18px 24px;
+  color: #264653;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
 .workspace {
   display: flex;
   flex-direction: column;
@@ -556,6 +571,57 @@
   gap: 8px;
 }
 
+.arrow-list-header,
+.saved-graph-header strong {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #14213d;
+}
+
+.arrow-list-header {
+  padding: 2px 2px 0;
+}
+
+.saved-graph-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.saved-graph-header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.saved-graph-header span,
+.saved-graph-summary {
+  font-size: 0.75rem;
+  color: #52616b;
+}
+
+.saved-graph-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.ghost-button {
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #fff;
+  color: #264653;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .saved-graph-form label {
   display: grid;
   gap: 4px;
@@ -883,6 +949,21 @@
   align-items: center;
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.remote-update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e7d5a6;
+  border-radius: 12px;
+  background: #fff8e8;
+  color: #7c5a03;
+  font-size: 0.84rem;
+  font-weight: 700;
 }
 
 .top-tab {
