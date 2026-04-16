@@ -104,6 +104,14 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max)
 }
 
+function formatPointMetric(value) {
+  if (!Number.isFinite(value)) {
+    return '-'
+  }
+
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, '')
+}
+
 function createPoint(name, x, y, color) {
   return {
     id: crypto.randomUUID(),
@@ -1155,6 +1163,7 @@ function App() {
   const [activeLabelId, setActiveLabelId] = useState(null)
   const [debugLabelEvent, setDebugLabelEvent] = useState('idle')
   const [pointSortOrder, setPointSortOrder] = useState(SORT_OPTIONS.nameAsc)
+  const [pointSearchQuery, setPointSearchQuery] = useState('')
   const [isDisplayPanelOpen, setIsDisplayPanelOpen] = useState(false)
   const [activeTab, setActiveTab] = useState(TAB_OPTIONS.dashboard)
 
@@ -1416,6 +1425,23 @@ function App() {
       return collator.compare(left.name, right.name)
     })
   }, [pointSortOrder, points, showSecondaryQuadrants])
+
+  const displayPoints = useMemo(() => {
+    const normalizedQuery = pointSearchQuery.replace(/\s+/g, '').trim().toLocaleLowerCase('ko')
+
+    if (!normalizedQuery) {
+      return sortedPoints
+    }
+
+    return sortedPoints.filter((point) =>
+      point.name.replace(/\s+/g, '').toLocaleLowerCase('ko').includes(normalizedQuery),
+    )
+  }, [sortedPoints, pointSearchQuery])
+
+  const areDisplayPointsAllVisible = useMemo(
+    () => displayPoints.length > 0 && displayPoints.every((point) => point.visible !== false),
+    [displayPoints],
+  )
 
   const labelLayouts = useMemo(
     () => buildLabelLayouts(visibleDisplayPoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds),
@@ -1807,6 +1833,20 @@ function App() {
     setPoints((current) =>
       current.map((point) => (point.id === id ? { ...point, visible } : point)),
     )
+  }
+
+  const handleVisiblePointsVisibility = (visible) => {
+    const displayPointIds = new Set(displayPoints.map((point) => point.id))
+    setActiveSavedGraphId(null)
+    setPoints((current) =>
+      current.map((point) =>
+        displayPointIds.has(point.id) ? { ...point, visible } : point,
+      ),
+    )
+  }
+
+  const handleToggleVisiblePointsVisibility = () => {
+    handleVisiblePointsVisibility(!areDisplayPointsAllVisible)
   }
 
   const handleQuadrantVisibilityChange = (quadrant, visible) => {
@@ -2312,7 +2352,25 @@ function App() {
 
             <section className="point-list">
               <div className="point-list-header">
-                <span>호텔 리스트</span>
+                <div className="point-list-title-group">
+                  <span>호텔 리스트</span>
+                  <button
+                    type="button"
+                    className="point-list-bulk-button"
+                    onClick={handleToggleVisiblePointsVisibility}
+                  >
+                    전체 선택/해제
+                  </button>
+                </div>
+                <div className="point-list-search-wrap">
+                  <input
+                    className="point-search-input"
+                    value={pointSearchQuery}
+                    onChange={(event) => setPointSearchQuery(event.target.value)}
+                    placeholder="호텔명 검색"
+                    aria-label="호텔명 검색"
+                  />
+                </div>
                 <select
                   className="point-sort-select"
                   value={pointSortOrder}
@@ -2325,64 +2383,71 @@ function App() {
                 </select>
               </div>
               <div className="point-list-body">
-                <ul>
-                  {sortedPoints.map((point) => (
-                    <li key={point.id} data-visible={point.visible !== false ? 'true' : 'false'}>
-                      <div className="point-meta">
-                        <div className="point-title-row">
-                          <label className="point-visibility-toggle">
+                {displayPoints.length ? (
+                  <ul>
+                    {displayPoints.map((point) => (
+                      <li key={point.id} data-visible={point.visible !== false ? 'true' : 'false'}>
+                        <div className="point-meta">
+                          <div className="point-title-row">
+                            <label className="point-visibility-toggle">
+                              <input
+                                type="checkbox"
+                                checked={point.visible !== false}
+                                onChange={(event) =>
+                                  handlePointVisibilityChange(point.id, event.target.checked)
+                                }
+                              />
+                              <span>표기</span>
+                            </label>
+                            <strong>{point.name}</strong>
+                          </div>
+                          <span>{getPointLocationLabel(point, showSecondaryQuadrants)}</span>
+                          <span>
+                            단가 : {formatPointMetric(point.x)} / 난이도 : {formatPointMetric(point.y)}
+                          </span>
+                        </div>
+                        <div className="point-actions">
+                          <label className="point-check">
                             <input
                               type="checkbox"
-                              checked={point.visible !== false}
+                              checked={arrowForm.fromId === point.id}
                               onChange={(event) =>
-                                handlePointVisibilityChange(point.id, event.target.checked)
+                                handleArrowPointToggle('fromId', point.id, event.target.checked)
                               }
                             />
-                            <span>표기</span>
+                            <span>시작</span>
                           </label>
-                          <strong>{point.name}</strong>
+                          <label className="point-check">
+                            <input
+                              type="checkbox"
+                              checked={arrowForm.toId === point.id}
+                              onChange={(event) =>
+                                handleArrowPointToggle('toId', point.id, event.target.checked)
+                              }
+                            />
+                            <span>끝</span>
+                          </label>
+                          <input
+                            type="color"
+                            value={point.color}
+                            className="color-picker"
+                            onChange={(event) => handlePointColorChange(point.id, event.target.value)}
+                            aria-label={`${point.name} color`}
+                          />
+                          <button
+                            type="button"
+                            className="delete-button"
+                            onClick={() => handleDeletePoint(point.id)}
+                          >
+                            삭제
+                          </button>
                         </div>
-                        <span>{getPointLocationLabel(point, showSecondaryQuadrants)}</span>
-                      </div>
-                      <div className="point-actions">
-                        <label className="point-check">
-                          <input
-                            type="checkbox"
-                            checked={arrowForm.fromId === point.id}
-                            onChange={(event) =>
-                              handleArrowPointToggle('fromId', point.id, event.target.checked)
-                            }
-                          />
-                          <span>시작</span>
-                        </label>
-                        <label className="point-check">
-                          <input
-                            type="checkbox"
-                            checked={arrowForm.toId === point.id}
-                            onChange={(event) =>
-                              handleArrowPointToggle('toId', point.id, event.target.checked)
-                            }
-                          />
-                          <span>끝</span>
-                        </label>
-                        <input
-                          type="color"
-                          value={point.color}
-                          className="color-picker"
-                          onChange={(event) => handlePointColorChange(point.id, event.target.value)}
-                          aria-label={`${point.name} color`}
-                        />
-                        <button
-                          type="button"
-                          className="delete-button"
-                          onClick={() => handleDeletePoint(point.id)}
-                        >
-                          삭제
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="point-list-empty">검색 결과가 없습니다</p>
+                )}
               </div>
             </section>
 

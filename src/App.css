@@ -600,14 +600,27 @@
 }
 
 .point-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px) auto;
+  align-items: start;
+  gap: 10px;
   padding: 2px 2px 8px;
   font-size: 0.8rem;
   font-weight: 700;
   color: #14213d;
+}
+
+.point-list-title-group {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.point-list-search-wrap {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
 }
 
 .point-title-row {
@@ -639,6 +652,52 @@
   font: inherit;
   color: #14213d;
   background: #fff;
+}
+
+.point-search-input {
+  width: 100%;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  color: #14213d;
+  background: #fff;
+}
+
+.point-list-bulk-button {
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #264653;
+  background: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.point-list-empty {
+  margin: 0;
+  padding: 16px 8px;
+  font-size: 0.82rem;
+  color: #6b7280;
+  text-align: center;
+}
+
+@media (max-width: 1100px) {
+  .point-list-header {
+    grid-template-columns: 1fr;
+  }
+
+  .point-list-search-wrap,
+  .point-sort-select {
+    width: 100%;
+  }
+
+  .point-list-search-wrap {
+    justify-content: stretch;
+  }
 }
 
 .point-list ul,
