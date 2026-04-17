@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { toPng } from 'html-to-image'
+import { useLayoutEffect } from 'react'
 import {
   ReferenceLine,
   ResponsiveContainer,
@@ -32,19 +33,15 @@ const ARROW_OPACITY = 0.72
 const ARROW_STROKE_WIDTH = 1.2
 const ARROW_DASH = '5 5'
 const LABEL_GAP = 18
-const LEADER_STEP = 12
 const LABEL_BOX_PADDING = 8
 const TOP_LABEL_OFFSET = 8
 const SHRUNK_POINT_RADIUS = 2.25
 const LABEL_FONT_SIZE = 8.5
 const DENSE_LABEL_FONT_SIZE = 8
-const LEADER_LABEL_INSET_X = 5
-const LEADER_LABEL_INSET_Y = 3
-const LEADER_ELBOW_GAP = 6
 const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
-const MAX_LABEL_FREE_DISTANCE = 20
-const LEADER_REQUIRED_DISTANCE = 3
+const LEADER_DISTANCE_THRESHOLD = 14
+const FORCE_SHOW_LEADERS = false
 const STATE_HISTORY_LIMIT = 20
 const CURRENT_STATE_ROW_ID = 1
 const DEFAULT_COLORS = [
@@ -235,42 +232,7 @@ function wrapLabelText(value) {
     return ['']
   }
 
-  const words = text.split(/\s+/)
-  const lines = []
-  let currentLine = ''
-
-  const pushChunkedWord = (word) => {
-    for (let index = 0; index < word.length; index += LABEL_MAX_CHARS) {
-      lines.push(word.slice(index, index + LABEL_MAX_CHARS))
-    }
-  }
-
-  words.forEach((word) => {
-    if (word.length > LABEL_MAX_CHARS) {
-      if (currentLine) {
-        lines.push(currentLine)
-        currentLine = ''
-      }
-      pushChunkedWord(word)
-      return
-    }
-
-    const nextLine = currentLine ? `${currentLine} ${word}` : word
-
-    if (nextLine.length > LABEL_MAX_CHARS) {
-      lines.push(currentLine)
-      currentLine = word
-      return
-    }
-
-    currentLine = nextLine
-  })
-
-  if (currentLine) {
-    lines.push(currentLine)
-  }
-
-  return lines.length ? lines : [text]
+  return [text]
 }
 
 function boxesOverlap(boxA, boxB) {
@@ -486,48 +448,142 @@ function boxOverlapsGuideLines(box, guideLines) {
   )
 }
 
-function getRectAnchor(point, box) {
-  const targetBox = {
-    x: box.x + LEADER_LABEL_INSET_X,
-    y: box.y + LEADER_LABEL_INSET_Y,
-    width: Math.max(box.width - LEADER_LABEL_INSET_X * 2, 1),
-    height: Math.max(box.height - LEADER_LABEL_INSET_Y * 2, 1),
+function getPointScreenPosition(coords) {
+  return {
+    x: coords.screenX,
+    y: coords.screenY,
   }
-  const centerX = targetBox.x + targetBox.width / 2
-  const centerY = targetBox.y + targetBox.height / 2
+}
+
+function getLabelRenderPosition(pointPosition, offset) {
+  return {
+    x: pointPosition.x + (offset?.x ?? 0),
+    y: pointPosition.y - TOP_LABEL_OFFSET + (offset?.y ?? 0),
+  }
+}
+
+function getPointCenter(pointScreenMapEntry) {
+  return {
+    x: pointScreenMapEntry.screenX,
+    y: pointScreenMapEntry.screenY,
+  }
+}
+
+function getContainerRelativeCenter(rect, containerRect) {
+  return {
+    x: rect.left - containerRect.left + rect.width / 2,
+    y: rect.top - containerRect.top + rect.height / 2,
+  }
+}
+
+function getLabelCenterFromElement(labelElement, containerElement) {
+  if (!labelElement || !containerElement) {
+    return null
+  }
+
+  const containerRect = containerElement.getBoundingClientRect()
+  const labelRect = labelElement.getBoundingClientRect()
+
+  return getContainerRelativeCenter(labelRect, containerRect)
+}
+
+function getLabelRectFromElement(labelElement, containerElement) {
+  if (!labelElement || !containerElement) {
+    return null
+  }
+
+  const containerRect = containerElement.getBoundingClientRect()
+  const labelRect = labelElement.getBoundingClientRect()
+
+  return {
+    x: labelRect.left - containerRect.left,
+    y: labelRect.top - containerRect.top,
+    width: labelRect.width,
+    height: labelRect.height,
+  }
+}
+
+function getLabelAnchorFromRect(point, rect) {
+  const centerX = rect.x + rect.width / 2
+  const centerY = rect.y + rect.height / 2
   const dx = point.x - centerX
   const dy = point.y - centerY
-  const absX = Math.abs(dx)
-  const absY = Math.abs(dy)
+  const absDx = Math.abs(dx)
+  const absDy = Math.abs(dy)
 
-  if (absX / targetBox.width > absY / targetBox.height) {
+  if (absDx / Math.max(rect.width, 1) > absDy / Math.max(rect.height, 1)) {
     return {
-      x: dx < 0 ? targetBox.x : targetBox.x + targetBox.width,
-      y: clamp(point.y, targetBox.y + 2, targetBox.y + targetBox.height - 2),
+      x: dx < 0 ? rect.x : rect.x + rect.width,
+      y: clamp(point.y, rect.y + 2, rect.y + rect.height - 2),
     }
   }
 
   return {
-    x: clamp(point.x, targetBox.x + 2, targetBox.x + targetBox.width - 2),
-    y: dy < 0 ? targetBox.y : targetBox.y + targetBox.height,
+    x: clamp(point.x, rect.x + 2, rect.x + rect.width - 2),
+    y: dy < 0 ? rect.y : rect.y + rect.height,
   }
 }
 
-function buildLeaderLine(point, radius, boxAnchor) {
-  const dx = boxAnchor.x - point.x
-  const dy = boxAnchor.y - point.y
-  const length = Math.hypot(dx, dy) || 1
-  const unitX = dx / length
-  const unitY = dy / length
-  const start = {
-    x: point.x,
-    y: point.y,
+function buildHtmlLeaderLayouts(labelLayouts, labelRefs, chartWrapElement, pointMap) {
+  if (!chartWrapElement) {
+    return []
   }
-  const elbow = Math.abs(dx) > Math.abs(dy)
-    ? { x: boxAnchor.x - unitX * LEADER_ELBOW_GAP, y: start.y }
-    : { x: start.x, y: boxAnchor.y - unitY * LEADER_ELBOW_GAP }
 
-  return { start, elbow, end: boxAnchor }
+  return labelLayouts
+    .map((layout) => {
+      const labelElement = labelRefs.current[layout.id]
+
+      if (!labelElement) {
+        return null
+      }
+
+      const pointEntry = pointMap[layout.id]
+      const pointCenter = pointEntry
+        ? { x: pointEntry.screenX, y: pointEntry.screenY }
+        : { x: layout.pointX, y: layout.pointY }
+      const labelCenter = getLabelCenterFromElement(labelElement, chartWrapElement)
+      const labelRect = getLabelRectFromElement(labelElement, chartWrapElement)
+
+      if (!labelCenter || !labelRect) {
+        return null
+      }
+
+      const labelAnchor = getLabelAnchorFromRect(pointCenter, labelRect)
+      const rawDx = labelAnchor.x - pointCenter.x
+      const rawDy = labelAnchor.y - pointCenter.y
+      const rawDistance = Math.hypot(rawDx, rawDy) || 1
+      const unitX = rawDx / rawDistance
+      const unitY = rawDy / rawDistance
+      const startOffset = POINT_RADIUS + 2
+      const endGap = 4
+      const startX = pointCenter.x + unitX * startOffset
+      const startY = pointCenter.y + unitY * startOffset
+      const endX = labelAnchor.x - unitX * endGap
+      const endY = labelAnchor.y - unitY * endGap
+      const dx = endX - startX
+      const dy = endY - startY
+      const distance = Math.hypot(dx, dy)
+      const angle = (Math.atan2(dy, dx) * 180) / Math.PI
+
+      return {
+        id: layout.id,
+        visible: FORCE_SHOW_LEADERS || distance > LEADER_DISTANCE_THRESHOLD,
+        left: startX,
+        top: startY,
+        dx,
+        dy,
+        width: distance,
+        angle,
+        x1: startX,
+        y1: startY,
+        x2: endX,
+        y2: endY,
+        distance,
+        point: pointCenter,
+        anchor: labelAnchor,
+      }
+    })
+    .filter(Boolean)
 }
 
 function getCandidateDistance(point, candidate) {
@@ -745,37 +801,50 @@ function getDenseNeighborCount(point, pointScreenMap, points) {
   }).length
 }
 
-function getLabelCandidates(point, coords, radius, lines, fontSize) {
-  const baseTopY = coords.screenY - radius - TOP_LABEL_OFFSET - LABEL_LINE_HEIGHT
-  const sideOffset = 18
-  const lowerOffset = 16
-
-  const topCandidate = {
-    centerX: coords.screenX,
-    topY: baseTopY,
-    anchor: 'middle',
-    requiresLeader: false,
-  }
+function getLabelCandidates(coords, radius, width, height) {
+  const horizontalGap = radius + 10
+  const verticalGap = radius + 8
 
   return [
-    topCandidate,
     {
-      centerX: coords.screenX + sideOffset,
-      topY: coords.screenY - LABEL_LINE_HEIGHT / 2,
-      anchor: 'start',
+      direction: 'top',
+      box: {
+        x: coords.screenX - width / 2,
+        y: coords.screenY - verticalGap - height,
+        width,
+        height,
+      },
       requiresLeader: false,
     },
     {
-      centerX: coords.screenX - sideOffset,
-      topY: coords.screenY - LABEL_LINE_HEIGHT / 2,
-      anchor: 'end',
-      requiresLeader: false,
+      direction: 'right',
+      box: {
+        x: coords.screenX + horizontalGap,
+        y: coords.screenY - height / 2,
+        width,
+        height,
+      },
+      requiresLeader: true,
     },
     {
-      centerX: coords.screenX,
-      topY: coords.screenY + lowerOffset,
-      anchor: 'middle',
-      requiresLeader: false,
+      direction: 'left',
+      box: {
+        x: coords.screenX - horizontalGap - width,
+        y: coords.screenY - height / 2,
+        width,
+        height,
+      },
+      requiresLeader: true,
+    },
+    {
+      direction: 'bottom',
+      box: {
+        x: coords.screenX - width / 2,
+        y: coords.screenY + verticalGap,
+        width,
+        height,
+      },
+      requiresLeader: true,
     },
   ]
 }
@@ -809,26 +878,17 @@ function buildLabelLayouts(points, pointScreenMap, radiusMap, labelOffsets, sour
       }
 
       const lines = wrapLabelText(point.name)
-      const fontSize = LABEL_FONT_SIZE
-      const offsetX = labelOffsets[point.id]?.x ?? 0
-      const offsetY = labelOffsets[point.id]?.y ?? 0
-      const textX = coords.screenX + offsetX
-      const textY = coords.screenY - TOP_LABEL_OFFSET + offsetY
+      const denseNeighborCount = getDenseNeighborCount(point, pointScreenMap, points)
+      const fontSize = denseNeighborCount >= 3 ? DENSE_LABEL_FONT_SIZE : LABEL_FONT_SIZE
+      const offset = labelOffsets[point.id] ?? { x: 0, y: 0 }
+      const pointPosition = getPointCenter(coords)
+      const labelPosition = getLabelRenderPosition(pointPosition, offset)
+
       const box = estimateLabelBoxWithFont(
         lines,
-        textX,
-        textY - LABEL_LINE_HEIGHT + LABEL_TEXT_PADDING_TOP,
+        labelPosition.x,
+        labelPosition.y - LABEL_LINE_HEIGHT + LABEL_TEXT_PADDING_TOP,
         fontSize,
-      )
-      const offsetDistance = Math.hypot(offsetX, offsetY)
-      const boxAnchor = getRectAnchor(
-        { x: coords.screenX, y: coords.screenY },
-        box,
-      )
-      const leader = buildLeaderLine(
-        { x: coords.screenX, y: coords.screenY },
-        radiusMap[point.id] ?? POINT_RADIUS,
-        boxAnchor,
       )
 
       return {
@@ -837,15 +897,16 @@ function buildLabelLayouts(points, pointScreenMap, radiusMap, labelOffsets, sour
         opacity: sourcePointIds.has(point.id) ? 0.5 : 1,
         lines,
         box,
-        textX,
-        textY,
+        textX: labelPosition.x,
+        textY: labelPosition.y,
         textAnchor: 'middle',
         fontSize,
-        requiresLeader:
-          Math.abs(offsetX) > LEADER_REQUIRED_DISTANCE || Math.abs(offsetY) > LEADER_REQUIRED_DISTANCE,
-        leader,
-        offsetX,
-        offsetY,
+        pointX: pointPosition.x,
+        pointY: pointPosition.y,
+        finalLabelX: labelPosition.x,
+        finalLabelY: labelPosition.y,
+        offsetX: offset.x,
+        offsetY: offset.y,
       }
     })
     .filter(Boolean)
@@ -1058,6 +1119,10 @@ function buildArrowLayouts(connections, pointScreenMap) {
     .filter(Boolean)
 }
 
+function isConnectionVisible(connection) {
+  return connection?.visible !== false
+}
+
 function PointShape(props) {
   const { cx, cy, payload, onPointRender, radius = POINT_RADIUS, opacity = 1 } = props
 
@@ -1089,6 +1154,7 @@ function App() {
 
   const chartRef = useRef(null)
   const chartWrapRef = useRef(null)
+  const labelRefs = useRef({})
   const chartSizeRef = useRef({ width: 0, height: 0 })
   const dragStateRef = useRef(null)
   const activeLabelRef = useRef(null)
@@ -1113,6 +1179,7 @@ function App() {
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
   const [labelOffsets, setLabelOffsets] = useState(() => initialGraphStateRef.current.labelOffsets)
+  const [leaderLayouts, setLeaderLayouts] = useState([])
   const [axisLabelOffsets, setAxisLabelOffsets] = useState(
     () => initialGraphStateRef.current.axisLabelOffsets ?? {
       top: { x: 0, y: 0 },
@@ -1123,9 +1190,8 @@ function App() {
     cloneGraphState(initialGraphStateRef.current),
   )
   const [stateHistory, setStateHistory] = useState([])
-  const [dragState, setDragState] = useState(null)
   const [activeLabelId, setActiveLabelId] = useState(null)
-  const [debugLabelEvent, setDebugLabelEvent] = useState('idle')
+  const [labelDebugText, setLabelDebugText] = useState('label-debug: init')
   const [pointSortOrder, setPointSortOrder] = useState(
     () => initialGraphStateRef.current.pointSortOrder ?? SORT_OPTIONS.nameAsc,
   )
@@ -1138,6 +1204,11 @@ function App() {
   const [hasRemoteUpdate, setHasRemoteUpdate] = useState(false)
 
   const setActiveSavedGraphId = () => {}
+  const updateLabelDebug = (message) => {
+    const nextMessage = `label-debug: ${message}`
+    console.log('[label-debug]', nextMessage)
+    setLabelDebugText(nextMessage)
+  }
 
   useEffect(() => {
     if (!chartWrapRef.current) {
@@ -1389,21 +1460,41 @@ function App() {
     }
   }, [chartSize, axisLabelOffsets])
 
-  const visibleConnections = useMemo(
-    () =>
-      connections.filter((connection) => {
-        if (connection.visible === false) {
-          return false
-        }
+  const visibleConnections = useMemo(() => {
+    const strictlyVisibleConnections = connections.filter((connection) => {
+      if (!isConnectionVisible(connection)) {
+        return false
+      }
 
-        if (showMovingQuadrantOnly && !movingQuadrantConnectionIds.has(connection.id)) {
-          return false
-        }
+      if (showMovingQuadrantOnly && !movingQuadrantConnectionIds.has(connection.id)) {
+        return false
+      }
 
-        return visiblePointIds.has(connection.fromId) && visiblePointIds.has(connection.toId)
-      }),
-    [connections, visiblePointIds, showMovingQuadrantOnly, movingQuadrantConnectionIds],
-  )
+      return visiblePointIds.has(connection.fromId) && visiblePointIds.has(connection.toId)
+    })
+
+    if (strictlyVisibleConnections.length > 0 || connections.length === 0) {
+      return strictlyVisibleConnections
+    }
+
+    return connections.filter((connection) => {
+      if (!isConnectionVisible(connection)) {
+        return false
+      }
+
+      if (showMovingQuadrantOnly && !movingQuadrantConnectionIds.has(connection.id)) {
+        return false
+      }
+
+      return Boolean(pointScreenMap[connection.fromId] && pointScreenMap[connection.toId])
+    })
+  }, [
+    connections,
+    visiblePointIds,
+    showMovingQuadrantOnly,
+    movingQuadrantConnectionIds,
+    pointScreenMap,
+  ])
 
   const connectionListItems = useMemo(
     () =>
@@ -1480,10 +1571,81 @@ function App() {
     [visibleDisplayPoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds],
   )
 
+  useLayoutEffect(() => {
+    if (!chartWrapRef.current) {
+      setLeaderLayouts([])
+      return
+    }
+
+    const layouts = buildHtmlLeaderLayouts(
+      labelLayouts,
+      labelRefs,
+      chartWrapRef.current,
+      pointScreenMap,
+    )
+
+    setLeaderLayouts(layouts)
+    console.log(
+      '[leader-debug] first 5 leaders',
+      layouts.slice(0, 5).map((leader) => ({
+        id: leader.id,
+        pointX: leader.point.x,
+        pointY: leader.point.y,
+        anchorX: leader.anchor.x,
+        anchorY: leader.anchor.y,
+        startX: leader.x1,
+        startY: leader.y1,
+        endX: leader.x2,
+        endY: leader.y2,
+        width: leader.width,
+        angle: leader.angle,
+      })),
+    )
+  }, [labelLayouts, labelOffsets, renderedPointMap, pointScreenMap, chartSize, visibleDisplayPoints])
+
   const arrowLayouts = useMemo(
     () => buildArrowLayouts(visibleConnections, pointScreenMap),
     [visibleConnections, pointScreenMap],
   )
+
+  useEffect(() => {
+    console.log('[arrow-debug] raw edges', connections)
+    console.log('[arrow-debug] edges length', connections.length)
+    console.log('[arrow-debug] visibleConnections', visibleConnections.length)
+    console.log('[arrow-debug] final edges for render', visibleConnections)
+    console.log('[arrow-debug] arrowLayouts', arrowLayouts.length)
+    console.log(
+      '[arrow-debug] pointScreenMap sample',
+      Object.values(pointScreenMap)
+        .filter(Boolean)
+        .slice(0, 5),
+    )
+    console.log(
+      '[arrow-debug] first 5 arrows',
+      arrowLayouts.slice(0, 5).map((arrow) => ({
+        id: arrow.id,
+        path: arrow.path,
+        startCenter: arrow.startCenter,
+        endCenter: arrow.endCenter,
+        startAnchor: arrow.startAnchor,
+        endAnchor: arrow.endAnchor,
+      })),
+    )
+    console.log(
+      '[arrow-debug] edge visibility map',
+      connections.map((connection) => ({
+        id: connection.id,
+        fromId: connection.fromId,
+        toId: connection.toId,
+        visible: connection.visible,
+        isVisibleByRule: isConnectionVisible(connection),
+        hasFromPoint: Boolean(pointScreenMap[connection.fromId]),
+        hasToPoint: Boolean(pointScreenMap[connection.toId]),
+        passesVisiblePointFilter:
+          visiblePointIds.has(connection.fromId) && visiblePointIds.has(connection.toId),
+      })),
+    )
+  }, [connections, visibleConnections, arrowLayouts, pointScreenMap, visiblePointIds])
 
   const analyzeQuadrantGroups = useMemo(
     () =>
@@ -1577,9 +1739,8 @@ function App() {
     setPointSearchQuery(normalized.pointSearchQuery ?? '')
     setArrowForm(EMPTY_ARROW_FORM)
     setActiveLabelId(null)
-    setDragState(null)
+    updateLabelDebug('state-applied')
     setErrorMessage(options.message ?? '')
-    setDebugLabelEvent(options.debugLabel ?? 'graph-state-loaded')
   }
 
   const handlePointRender = (id, x, y) => {
@@ -1598,15 +1759,21 @@ function App() {
   }
 
   const toChartCoordinates = (clientX, clientY) => {
-    const currentChartSize = chartSizeRef.current
-
-    if (!chartWrapRef.current || !currentChartSize.width || !currentChartSize.height) {
+    if (!chartWrapRef.current || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
       return null
     }
 
     const rect = chartWrapRef.current.getBoundingClientRect()
-    const scaleX = currentChartSize.width / rect.width
-    const scaleY = currentChartSize.height / rect.height
+
+    if (!rect.width || !rect.height) {
+      return null
+    }
+
+    const currentChartSize = chartSizeRef.current
+    const effectiveWidth = currentChartSize.width || rect.width
+    const effectiveHeight = currentChartSize.height || rect.height
+    const scaleX = effectiveWidth / rect.width
+    const scaleY = effectiveHeight / rect.height
 
     return {
       x: (clientX - rect.left) * scaleX,
@@ -1615,16 +1782,16 @@ function App() {
   }
 
   const handleLabelMouseDown = (event, labelId, type = 'point') => {
-    setDebugLabelEvent(`mousedown:${labelId}`)
-
+    updateLabelDebug(`mousedown:${labelId}`)
     if (activeLabelRef.current !== labelId) {
-      setDebugLabelEvent(`mousedown-blocked:${labelId}`)
+      updateLabelDebug(`mousedown-blocked:${labelId}`)
       return
     }
 
     event.preventDefault()
     event.stopPropagation()
     if (event.button !== 0) {
+      updateLabelDebug(`mousedown-non-left:${labelId}`)
       return
     }
 
@@ -1634,7 +1801,7 @@ function App() {
       : labelOffsets[labelId] ?? { x: 0, y: 0 }
 
     if (!pointer) {
-      setDebugLabelEvent(`mousedown-no-pointer:${labelId}`)
+      updateLabelDebug(`mousedown-no-pointer:${labelId}`)
       return
     }
 
@@ -1647,27 +1814,16 @@ function App() {
       initialOffsetY: currentOffset.y,
     }
 
-    dragStateRef.current = nextDragState
-    setDebugLabelEvent(`drag-start:${labelId}`)
-    setDragState(nextDragState)
-
-  }
+      dragStateRef.current = nextDragState
+      updateLabelDebug(`drag-start:${labelId}`)
+    }
 
   const handleLabelActivate = (event, labelId) => {
     event.preventDefault()
     event.stopPropagation()
-    setDebugLabelEvent(`dblclick:${labelId}`)
-    if (activeLabelRef.current === labelId) {
-      handleResetLabel(labelId)
-      activeLabelRef.current = null
-      setActiveLabelId(null)
-      setDebugLabelEvent(`dblclick-reset:${labelId}`)
-      return
-    }
-
     activeLabelRef.current = labelId
     setActiveLabelId(labelId)
-    setDebugLabelEvent(`active:${labelId}`)
+    updateLabelDebug(`dblclick:${labelId}`)
   }
 
   const handleChartMouseMove = (event) => {
@@ -1680,16 +1836,18 @@ function App() {
     const pointer = toChartCoordinates(event.clientX, event.clientY)
 
     if (!pointer) {
-      setDebugLabelEvent(`drag-no-pointer:${currentDragState.pointId}`)
+      updateLabelDebug(`drag-no-pointer:${currentDragState.pointId}`)
       return
     }
 
-    setDebugLabelEvent(`dragging:${currentDragState.pointId}`)
     setActiveSavedGraphId(null)
     const nextOffset = {
       x: currentDragState.initialOffsetX + (pointer.x - currentDragState.pointerStartX),
       y: currentDragState.initialOffsetY + (pointer.y - currentDragState.pointerStartY),
     }
+    updateLabelDebug(
+      `dragging:${currentDragState.pointId}:${nextOffset.x.toFixed(1)},${nextOffset.y.toFixed(1)}`,
+    )
 
     if (currentDragState.type === 'axis') {
       setAxisLabelOffsets((current) => ({
@@ -1706,14 +1864,10 @@ function App() {
   }
 
   const handleChartMouseUp = () => {
-    const currentDragState = dragStateRef.current
-
-    if (currentDragState) {
-      setDebugLabelEvent(`drag-end:${currentDragState.pointId}`)
+    if (dragStateRef.current) {
+      updateLabelDebug(`drag-end:${dragStateRef.current.pointId}`)
     }
-
     dragStateRef.current = null
-    setDragState(null)
   }
 
   const handleChartMouseDown = (event) => {
@@ -1724,7 +1878,7 @@ function App() {
     if (!labelElement && !dragStateRef.current) {
       activeLabelRef.current = null
       setActiveLabelId(null)
-      setDebugLabelEvent('active-cleared')
+      updateLabelDebug('active-cleared')
     }
   }
 
@@ -2308,7 +2462,7 @@ function App() {
               className="label-overlay"
               width="100%"
               height="100%"
-              viewBox={`0 0 ${chartSize.width} ${chartSize.height}`}
+              preserveAspectRatio="none"
             >
               <defs>
                 <marker
@@ -2339,31 +2493,46 @@ function App() {
                   markerEnd="url(#arrowhead)"
                 />
               ))}
-
-              {labelLayouts
-                .filter((layout) => layout.requiresLeader && layout.leader)
-                .map((layout) => (
-                  <polyline
-                    key={`leader-${layout.id}`}
-                    className="label-leader"
-                    points={`${layout.leader.start.x},${layout.leader.start.y} ${layout.leader.elbow.x},${layout.leader.elbow.y} ${layout.leader.end.x},${layout.leader.end.y}`}
-                    fill="none"
-                    stroke="rgba(31, 41, 51, 0.5)"
-                    strokeWidth="1"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                ))}
-
             </svg>
 
-            <div className="html-label-layer">
-              {labelLayouts.map((layout) => (
-                <div
+              <div className="leader-line-layer">
+                {leaderLayouts.filter((leader) => leader.visible).map((leader) => (
+                  <div key={`leader-html-${leader.id}`}>
+                    {(() => {
+                      const lineWidth = Number.isFinite(leader.width) ? Math.max(leader.width, 8) : 8
+                      const lineAngle = Number.isFinite(leader.angle) ? leader.angle : 0
+
+                      return (
+                        <div
+                          className="leader-line"
+                          style={{
+                            left: `${leader.x1}px`,
+                            top: `${leader.y1}px`,
+                            width: `${lineWidth}px`,
+                            transform: `translateY(-50%) rotate(${lineAngle}deg)`,
+                          }}
+                        />
+                      )
+                    })()}
+                  </div>
+                ))}
+              </div>
+
+              <div className="html-label-layer">
+                {labelLayouts.map((layout) => (
+                  <div
                   key={`label-${layout.id}`}
                   className="html-label"
                   data-label-id={layout.id}
                   data-active={activeLabelId === layout.id ? 'true' : 'false'}
+                  ref={(node) => {
+                    if (node) {
+                      labelRefs.current[layout.id] = node
+                    } else {
+                      delete labelRefs.current[layout.id]
+                    }
+                  }}
+                  title={activeLabelId === layout.id ? '드래그로 위치 이동' : '더블클릭 후 드래그로 이동'}
                   draggable={false}
                   onDragStart={(event) => event.preventDefault()}
                   onMouseDown={(event) => handleLabelMouseDown(event, layout.id)}
@@ -2376,11 +2545,14 @@ function App() {
                   }}
                 >
                   {layout.lines.join('\n')}
-                </div>
-              ))}
+                  </div>
+                ))}
+              </div>
+              <div className="label-debug-overlay" aria-live="polite">
+                {labelDebugText}
+              </div>
             </div>
           </div>
-        </div>
 
         <aside className="sidebar">
           <div className="sidebar-top">
@@ -2428,7 +2600,6 @@ function App() {
                 <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} />
               </label>
               {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
-              <p className="error-text">label-debug: {debugLabelEvent}</p>
             </form>
 
             <section className="point-list">

@@ -270,9 +270,31 @@
 .label-overlay {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   overflow: visible;
   pointer-events: none;
   z-index: 1;
+  background: rgba(255, 0, 0, 0.03);
+}
+
+.leader-line-layer {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.leader-line {
+  position: absolute;
+  height: 0;
+  border-top: 1px solid rgba(120, 128, 140, 0.75);
+  box-sizing: border-box;
+  transform-origin: 0 50%;
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .html-label-layer {
@@ -280,7 +302,7 @@
   inset: 0;
   overflow: visible;
   pointer-events: auto;
-  z-index: 2;
+  z-index: 3;
 }
 
 .html-label {
@@ -289,12 +311,18 @@
   color: #000000;
   font-weight: 500;
   line-height: 1.2;
-  white-space: pre-line;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  display: inline-block;
   pointer-events: auto;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   -webkit-user-drag: none;
+  touch-action: none;
   z-index: 3;
 }
 
@@ -333,6 +361,23 @@
 .label-leader,
 .arrow-path {
   pointer-events: none;
+}
+
+.label-debug-overlay {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 9999;
+  padding: 6px 10px;
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
 .sidebar {
