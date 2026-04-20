@@ -12,7 +12,7 @@ import {
 } from 'recharts'
 import * as XLSX from 'xlsx'
 import defaultGraphStateData from './defaultGraphState.json'
-import { supabase } from './lib/supabaseClient'
+import { supabase, supabaseEnvStatus } from './lib/supabaseClient'
 import './App.css'
 
 const X_DOMAIN = [-7.2, 7.2]
@@ -1211,6 +1211,15 @@ function App() {
   }
 
   useEffect(() => {
+    console.log('[supabase-debug] env status', {
+      hasUrl: supabaseEnvStatus.hasUrl,
+      hasAnonKey: supabaseEnvStatus.hasAnonKey,
+      urlPreview: supabaseEnvStatus.urlPreview,
+      hasClient: Boolean(supabase),
+    })
+  }, [])
+
+  useEffect(() => {
     if (!chartWrapRef.current) {
       return undefined
     }
@@ -1666,6 +1675,11 @@ function App() {
 
   const fetchCurrentStateFromDb = async () => {
     if (!supabase) {
+      console.error('[supabase-debug] fetch skipped: client unavailable', {
+        hasUrl: supabaseEnvStatus.hasUrl,
+        hasAnonKey: supabaseEnvStatus.hasAnonKey,
+        urlPreview: supabaseEnvStatus.urlPreview,
+      })
       return null
     }
 
@@ -1928,7 +1942,11 @@ function App() {
     lastAppliedRemoteUpdatedAtRef.current = nextUpdatedAt
 
     if (!supabase) {
-      console.error('Supabase client is not configured')
+      console.error('[supabase-debug] save skipped: client unavailable', {
+        hasUrl: supabaseEnvStatus.hasUrl,
+        hasAnonKey: supabaseEnvStatus.hasAnonKey,
+        urlPreview: supabaseEnvStatus.urlPreview,
+      })
       setErrorMessage('Supabase 설정이 없어 로컬 상태만 저장했습니다.')
       return
     }
