@@ -1229,6 +1229,8 @@ function App() {
     console.log('[supabase-debug] env status', {
       hasUrl: supabaseEnvStatus.hasUrl,
       hasAnonKey: supabaseEnvStatus.hasAnonKey,
+      usingFallbackUrl: supabaseEnvStatus.usingFallbackUrl,
+      usingFallbackKey: supabaseEnvStatus.usingFallbackKey,
       urlPreview: supabaseEnvStatus.urlPreview,
       hasClient: Boolean(supabase),
     })
@@ -1693,6 +1695,8 @@ function App() {
       console.error('[supabase-debug] fetch skipped: client unavailable', {
         hasUrl: supabaseEnvStatus.hasUrl,
         hasAnonKey: supabaseEnvStatus.hasAnonKey,
+        usingFallbackUrl: supabaseEnvStatus.usingFallbackUrl,
+        usingFallbackKey: supabaseEnvStatus.usingFallbackKey,
         urlPreview: supabaseEnvStatus.urlPreview,
       })
       return null
@@ -1960,6 +1964,8 @@ function App() {
       console.error('[supabase-debug] save skipped: client unavailable', {
         hasUrl: supabaseEnvStatus.hasUrl,
         hasAnonKey: supabaseEnvStatus.hasAnonKey,
+        usingFallbackUrl: supabaseEnvStatus.usingFallbackUrl,
+        usingFallbackKey: supabaseEnvStatus.usingFallbackKey,
         urlPreview: supabaseEnvStatus.urlPreview,
       })
       setErrorMessage('Supabase 설정이 없어 로컬 상태만 저장했습니다.')
@@ -1968,19 +1974,19 @@ function App() {
 
     const { error } = await supabase
       .from('current_state')
-      .update({
+      .upsert({
+        id: CURRENT_STATE_ROW_ID,
         data: nextState,
         updated_at: nextUpdatedAt,
       })
-      .eq('id', CURRENT_STATE_ROW_ID)
 
     if (error) {
       console.error('Failed to save current_state', error)
-      setErrorMessage('저장 실패: 콘솔 로그를 확인해주세요.')
+      setErrorMessage(`저장 실패: ${error.message}`)
       return
     }
 
-    setErrorMessage('현재 상태를 저장했습니다.')
+    setErrorMessage('현재 상태를 저장했습니다. 다른 접속 환경에서 새 저장본 알림을 받을 수 있습니다.')
   }
 
   const rollbackToLastState = () => {
