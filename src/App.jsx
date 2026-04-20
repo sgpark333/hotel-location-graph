@@ -1054,20 +1054,35 @@ function curveHitsObstacles(start, control, end, obstacles) {
 }
 
 function buildArrowLayouts(connections, pointScreenMap) {
-  const pointEntries = Object.values(pointScreenMap)
+  const pointEntries = Object.values(pointScreenMap).filter(Boolean)
 
   return connections
     .map((connection) => {
       const start = pointScreenMap[connection.fromId]
       const end = pointScreenMap[connection.toId]
 
-      if (!start || !end) {
+      if (
+        !start ||
+        !end ||
+        !Number.isFinite(start.screenX) ||
+        !Number.isFinite(start.screenY) ||
+        !Number.isFinite(end.screenX) ||
+        !Number.isFinite(end.screenY)
+      ) {
         return null
       }
 
       const obstacles = []
 
       pointEntries.forEach((point) => {
+        if (
+          !point ||
+          !Number.isFinite(point.screenX) ||
+          !Number.isFinite(point.screenY)
+        ) {
+          return
+        }
+
         if (point.id === start.id || point.id === end.id) {
           return
         }
