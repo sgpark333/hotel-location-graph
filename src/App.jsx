@@ -177,6 +177,7 @@ function normalizeGraphState(state) {
           .map((connection) => ({
             ...connection,
             visible: connection.visible !== false,
+            arrowStatus: connection.arrowStatus === 'confirmed' ? 'confirmed' : 'discussing',
           }))
       : [],
     labelOffsets:
@@ -2218,6 +2219,7 @@ function App() {
         toId: arrowForm.toId,
         color: DEFAULT_ARROW_COLOR,
         visible: true,
+        arrowStatus: 'discussing',
       },
     ])
     setArrowForm(EMPTY_ARROW_FORM)
@@ -2234,6 +2236,15 @@ function App() {
     setConnections((current) =>
       current.map((connection) =>
         connection.id === id ? { ...connection, visible } : connection,
+      ),
+    )
+  }
+
+  const handleArrowStatusChange = (id, status) => {
+    setActiveSavedGraphId(null)
+    setConnections((current) =>
+      current.map((connection) =>
+        connection.id === id ? { ...connection, arrowStatus: status } : connection,
       ),
     )
   }
@@ -2600,7 +2611,9 @@ function App() {
                   fill="none"
                   stroke={arrow.color}
                   strokeWidth={ARROW_STROKE_WIDTH}
-                  strokeDasharray={ARROW_DASH}
+                  strokeDasharray={
+                    (arrow.arrowStatus ?? 'discussing') === 'discussing' ? ARROW_DASH : undefined
+                  }
                   opacity={ARROW_OPACITY}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -2899,6 +2912,22 @@ function App() {
                         <span>
                           {arrow.fromName} → {arrow.toName}
                         </span>
+                        <label className="point-check">
+                          <input
+                            type="checkbox"
+                            checked={(arrow.arrowStatus ?? 'discussing') === 'confirmed'}
+                            onChange={() => handleArrowStatusChange(arrow.id, 'confirmed')}
+                          />
+                          <span>확정</span>
+                        </label>
+                        <label className="point-check">
+                          <input
+                            type="checkbox"
+                            checked={(arrow.arrowStatus ?? 'discussing') === 'discussing'}
+                            onChange={() => handleArrowStatusChange(arrow.id, 'discussing')}
+                          />
+                          <span>협의 중</span>
+                        </label>
                         <button
                           type="button"
                           className="delete-button"
