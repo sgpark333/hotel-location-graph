@@ -217,6 +217,7 @@ function normalizeGraphState(state) {
         : DEFAULT_QUADRANT_VISIBILITY,
     showConnectedOnly: Boolean(state.showConnectedOnly),
     showMovingQuadrantOnly: Boolean(state.showMovingQuadrantOnly),
+    showOnlyContractEnding: Boolean(state.showOnlyContractEnding),
     showSecondaryQuadrants: Boolean(state.showSecondaryQuadrants),
     pointSortOrder: Object.values(SORT_OPTIONS).includes(state.pointSortOrder)
       ? state.pointSortOrder
@@ -1212,6 +1213,9 @@ function App() {
   const [showMovingQuadrantOnly, setShowMovingQuadrantOnly] = useState(
     () => initialGraphStateRef.current.showMovingQuadrantOnly ?? false,
   )
+  const [showOnlyContractEnding, setShowOnlyContractEnding] = useState(
+    () => initialGraphStateRef.current.showOnlyContractEnding ?? false,
+  )
   const [errorMessage, setErrorMessage] = useState('')
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
@@ -1388,34 +1392,6 @@ function App() {
     })
   }, [points])
 
-  const pointScreenMap = useMemo(
-    () => {
-      const visiblePoints = points.filter((point) => point.visible !== false)
-      const manualPointMap = buildPointScreenMap(visiblePoints, chartSize)
-
-      return Object.fromEntries(
-      visiblePoints.map((point) => {
-          const rendered = renderedPointMap[point.id]
-          const fallback = manualPointMap[point.id]
-
-          if (!rendered && !fallback) {
-            return [point.id, null]
-          }
-
-          return [
-            point.id,
-            {
-              ...point,
-              screenX: rendered?.x ?? fallback.screenX,
-              screenY: rendered?.y ?? fallback.screenY,
-            },
-          ]
-        }),
-      )
-    },
-    [points, renderedPointMap, chartSize],
-  )
-
   const connectedPointIds = useMemo(
     () =>
       new Set(
@@ -1461,6 +1437,10 @@ function App() {
   const visiblePoints = useMemo(
     () =>
       points.filter((point) => {
+        if (showOnlyContractEnding && point.isContractEnding !== true) {
+          return false
+        }
+
         if (showMovingQuadrantOnly) {
           return movingQuadrantPointIds.has(point.id)
         }
@@ -1474,7 +1454,42 @@ function App() {
           quadrantVisibility[getQuadrant(point)] !== false
         )
       }),
-    [points, quadrantVisibility, showConnectedOnly, showMovingQuadrantOnly, connectedPointIds, movingQuadrantPointIds],
+    [
+      points,
+      quadrantVisibility,
+      showConnectedOnly,
+      showMovingQuadrantOnly,
+      showOnlyContractEnding,
+      connectedPointIds,
+      movingQuadrantPointIds,
+    ],
+  )
+
+  const pointScreenMap = useMemo(
+    () => {
+      const manualPointMap = buildPointScreenMap(visiblePoints, chartSize)
+
+      return Object.fromEntries(
+        visiblePoints.map((point) => {
+          const rendered = renderedPointMap[point.id]
+          const fallback = manualPointMap[point.id]
+
+          if (!rendered && !fallback) {
+            return [point.id, null]
+          }
+
+          return [
+            point.id,
+            {
+              ...point,
+              screenX: rendered?.x ?? fallback.screenX,
+              screenY: rendered?.y ?? fallback.screenY,
+            },
+          ]
+        }),
+      )
+    },
+    [visiblePoints, renderedPointMap, chartSize],
   )
 
   const visibleDisplayPoints = useMemo(
@@ -1770,6 +1785,7 @@ function App() {
       quadrantVisibility,
       showConnectedOnly,
       showMovingQuadrantOnly,
+      showOnlyContractEnding,
       showSecondaryQuadrants,
       pointSortOrder,
       pointSearchQuery,
@@ -1777,6 +1793,7 @@ function App() {
       displayOptions: {
         showConnectedOnly,
         showMovingQuadrantOnly,
+        showOnlyContractEnding,
         showSecondaryQuadrants,
         quadrantVisibility,
       },
@@ -1801,6 +1818,7 @@ function App() {
     setQuadrantVisibility(normalized.quadrantVisibility)
     setShowConnectedOnly(normalized.showConnectedOnly)
     setShowMovingQuadrantOnly(normalized.showMovingQuadrantOnly)
+    setShowOnlyContractEnding(normalized.showOnlyContractEnding)
     setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
     setPointSortOrder(normalized.pointSortOrder ?? SORT_OPTIONS.nameAsc)
     setPointSearchQuery(normalized.pointSearchQuery ?? '')
@@ -2407,6 +2425,18 @@ function App() {
                         }}
                       />
                       <span>분면 이동 점만 표시</span>
+                    </label>
+
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={showOnlyContractEnding}
+                        onChange={(event) => {
+                          setActiveSavedGraphId(null)
+                          setShowOnlyContractEnding(event.target.checked)
+                        }}
+                      />
+                      <span>계약 종료 호텔만 표시</span>
                     </label>
 
                   <div className="quadrant-filter-group">
