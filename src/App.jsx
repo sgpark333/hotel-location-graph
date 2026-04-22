@@ -917,6 +917,7 @@ function buildLabelLayouts(
       return {
         id: point.id,
         color: point.isContractEnding ? CONTRACT_ENDING_COLOR : '#000000',
+        textDecoration: point.isContractEnding ? 'line-through' : 'none',
         opacity: sourcePointIds.has(point.id) ? 0.5 : 1,
         lines,
         box,
@@ -2655,6 +2656,7 @@ function App() {
                     top: `${layout.textY}px`,
                     fontSize: `${layout.fontSize}px`,
                     color: layout.color,
+                    textDecoration: layout.textDecoration,
                     opacity: layout.opacity,
                   }}
                 >
