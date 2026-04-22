@@ -38,6 +38,7 @@ const TOP_LABEL_OFFSET = 8
 const SHRUNK_POINT_RADIUS = 2.25
 const LABEL_FONT_SIZE = 8.5
 const DENSE_LABEL_FONT_SIZE = 8
+const DEFAULT_LABEL_FONT_SIZE_INPUT = 12
 const LABEL_MIN_GAP_X = 8
 const LABEL_MIN_GAP_Y = 6
 const LEADER_DISTANCE_THRESHOLD = 14
@@ -218,6 +219,13 @@ function normalizeGraphState(state) {
       ? state.pointSortOrder
       : SORT_OPTIONS.nameAsc,
     pointSearchQuery: String(state.pointSearchQuery ?? ''),
+    labelFontSize: clamp(
+      Number.isFinite(Number(state.labelFontSize))
+        ? Number(state.labelFontSize)
+        : DEFAULT_LABEL_FONT_SIZE_INPUT,
+      6,
+      40,
+    ),
   }
 }
 
@@ -868,7 +876,14 @@ function buildGuideLines(chartSize, showSecondaryQuadrants) {
   }
 }
 
-function buildLabelLayouts(points, pointScreenMap, radiusMap, labelOffsets, sourcePointIds) {
+function buildLabelLayouts(
+  points,
+  pointScreenMap,
+  radiusMap,
+  labelOffsets,
+  sourcePointIds,
+  labelFontSize,
+) {
   return points
     .map((point) => {
       const coords = pointScreenMap[point.id]
@@ -878,8 +893,7 @@ function buildLabelLayouts(points, pointScreenMap, radiusMap, labelOffsets, sour
       }
 
       const lines = wrapLabelText(point.name)
-      const denseNeighborCount = getDenseNeighborCount(point, pointScreenMap, points)
-      const fontSize = denseNeighborCount >= 3 ? DENSE_LABEL_FONT_SIZE : LABEL_FONT_SIZE
+      const fontSize = labelFontSize
       const offset = labelOffsets[point.id] ?? { x: 0, y: 0 }
       const pointPosition = getPointCenter(coords)
       const labelPosition = getLabelRenderPosition(pointPosition, offset)
@@ -1212,6 +1226,9 @@ function App() {
   )
   const [pointSearchQuery, setPointSearchQuery] = useState(
     () => initialGraphStateRef.current.pointSearchQuery ?? '',
+  )
+  const [labelFontSize, setLabelFontSize] = useState(
+    () => initialGraphStateRef.current.labelFontSize ?? DEFAULT_LABEL_FONT_SIZE_INPUT,
   )
   const [isDisplayPanelOpen, setIsDisplayPanelOpen] = useState(false)
   const [activeTab, setActiveTab] = useState(TAB_OPTIONS.dashboard)
@@ -1593,8 +1610,16 @@ function App() {
   )
 
   const labelLayouts = useMemo(
-    () => buildLabelLayouts(visibleDisplayPoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds),
-    [visibleDisplayPoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds],
+    () =>
+      buildLabelLayouts(
+        visibleDisplayPoints,
+        pointScreenMap,
+        pointRadiusMap,
+        labelOffsets,
+        sourcePointIds,
+        labelFontSize,
+      ),
+    [visibleDisplayPoints, pointScreenMap, pointRadiusMap, labelOffsets, sourcePointIds, labelFontSize],
   )
 
   useLayoutEffect(() => {
@@ -1740,6 +1765,7 @@ function App() {
       showSecondaryQuadrants,
       pointSortOrder,
       pointSearchQuery,
+      labelFontSize,
       displayOptions: {
         showConnectedOnly,
         showMovingQuadrantOnly,
@@ -1770,6 +1796,7 @@ function App() {
     setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
     setPointSortOrder(normalized.pointSortOrder ?? SORT_OPTIONS.nameAsc)
     setPointSearchQuery(normalized.pointSearchQuery ?? '')
+    setLabelFontSize(normalized.labelFontSize ?? DEFAULT_LABEL_FONT_SIZE_INPUT)
     setArrowForm(EMPTY_ARROW_FORM)
     setActiveLabelId(null)
     updateLabelDebug('state-applied')
@@ -2596,6 +2623,24 @@ function App() {
         <aside className="sidebar">
           <div className="sidebar-top">
             <form className="entry-form" onSubmit={handleSubmit}>
+              <label>
+                호텔 이름 크기(px)
+                <input
+                  type="number"
+                  min="6"
+                  max="40"
+                  step="0.5"
+                  value={labelFontSize}
+                  onChange={(event) => {
+                    const nextValue = Number(event.target.value)
+
+                    if (!Number.isNaN(nextValue)) {
+                      setLabelFontSize(clamp(nextValue, 6, 40))
+                    }
+                  }}
+                />
+              </label>
+
               <label>
                 호텔명
                 <input
