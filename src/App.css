@@ -711,6 +711,12 @@
   opacity: 0.85;
 }
 
+.point-list-body li[data-contract-ending='true'] .point-meta strong,
+.point-list-body li[data-contract-ending='true'] .point-meta span,
+.point-list-body li[data-contract-ending='true'] .point-check {
+  color: #8f96a1;
+}
+
 .point-list-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(180px, 240px) auto;
@@ -863,11 +869,23 @@
   min-width: 0;
 }
 
+.point-actions-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .point-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.contract-ending-row {
+  margin-top: 4px;
 }
 
 .point-check {

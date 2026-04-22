@@ -75,6 +75,7 @@ const CONNECTION_GROUP_COLORS = [
   '#84cc16',
   '#475569',
 ]
+const CONTRACT_ENDING_COLOR = '#b8bcc3'
 
 const EMPTY_FORM = {
   name: '',
@@ -118,6 +119,7 @@ function createPoint(name, x, y, color) {
     x,
     y,
     color,
+    isContractEnding: false,
   }
 }
 
@@ -154,6 +156,7 @@ function normalizeGraphState(state) {
             y,
             color: point?.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length],
             visible: point?.visible !== false,
+            isContractEnding: point?.isContractEnding === true,
           }
         })
         .filter(Boolean)
@@ -752,7 +755,12 @@ function hexToRgba(color, alpha) {
 }
 
 function buildDisplayColorMap(points, connections) {
-  const displayMap = Object.fromEntries(points.map((point) => [point.id, point.color]))
+  const displayMap = Object.fromEntries(
+    points.map((point) => [
+      point.id,
+      point.isContractEnding ? CONTRACT_ENDING_COLOR : point.color,
+    ]),
+  )
   const pointIds = new Set(points.map((point) => point.id))
 
   connections.forEach((connection, index) => {
@@ -907,7 +915,7 @@ function buildLabelLayouts(
 
       return {
         id: point.id,
-        color: '#000000',
+        color: point.isContractEnding ? CONTRACT_ENDING_COLOR : '#000000',
         opacity: sourcePointIds.has(point.id) ? 0.5 : 1,
         lines,
         box,
@@ -2123,6 +2131,15 @@ function App() {
     )
   }
 
+  const handleContractEndingChange = (id, checked) => {
+    setActiveSavedGraphId(null)
+    setPoints((current) =>
+      current.map((point) =>
+        point.id === id ? { ...point, isContractEnding: checked } : point,
+      ),
+    )
+  }
+
   const handleVisiblePointsVisibility = (visible) => {
     const displayPointIds = new Set(displayPoints.map((point) => point.id))
     setActiveSavedGraphId(null)
@@ -2607,6 +2624,7 @@ function App() {
                     left: `${layout.textX}px`,
                     top: `${layout.textY}px`,
                     fontSize: `${layout.fontSize}px`,
+                    color: layout.color,
                     opacity: layout.opacity,
                   }}
                 >
@@ -2722,7 +2740,11 @@ function App() {
                 {displayPoints.length ? (
                   <ul>
                     {displayPoints.map((point) => (
-                      <li key={point.id} data-visible={point.visible !== false ? 'true' : 'false'}>
+                      <li
+                        key={point.id}
+                        data-visible={point.visible !== false ? 'true' : 'false'}
+                        data-contract-ending={point.isContractEnding === true ? 'true' : 'false'}
+                      >
                         <div className="point-meta">
                           <div className="point-title-row">
                             <label className="point-visibility-toggle">
@@ -2742,41 +2764,55 @@ function App() {
                             단가 : {formatPointMetric(point.x)} / 난이도 : {formatPointMetric(point.y)}
                           </span>
                         </div>
-                        <div className="point-actions">
-                          <label className="point-check">
+                        <div className="point-actions-group">
+                          <div className="point-actions">
+                            <label className="point-check">
+                              <input
+                                type="checkbox"
+                                checked={arrowForm.fromId === point.id}
+                                onChange={(event) =>
+                                  handleArrowPointToggle('fromId', point.id, event.target.checked)
+                                }
+                              />
+                              <span>시작</span>
+                            </label>
+                            <label className="point-check">
+                              <input
+                                type="checkbox"
+                                checked={arrowForm.toId === point.id}
+                                onChange={(event) =>
+                                  handleArrowPointToggle('toId', point.id, event.target.checked)
+                                }
+                              />
+                              <span>끝</span>
+                            </label>
                             <input
-                              type="checkbox"
-                              checked={arrowForm.fromId === point.id}
-                              onChange={(event) =>
-                                handleArrowPointToggle('fromId', point.id, event.target.checked)
-                              }
+                              type="color"
+                              value={point.color}
+                              className="color-picker"
+                              onChange={(event) => handlePointColorChange(point.id, event.target.value)}
+                              aria-label={`${point.name} color`}
                             />
-                            <span>시작</span>
-                          </label>
-                          <label className="point-check">
-                            <input
-                              type="checkbox"
-                              checked={arrowForm.toId === point.id}
-                              onChange={(event) =>
-                                handleArrowPointToggle('toId', point.id, event.target.checked)
-                              }
-                            />
-                            <span>끝</span>
-                          </label>
-                          <input
-                            type="color"
-                            value={point.color}
-                            className="color-picker"
-                            onChange={(event) => handlePointColorChange(point.id, event.target.value)}
-                            aria-label={`${point.name} color`}
-                          />
-                          <button
-                            type="button"
-                            className="delete-button"
-                            onClick={() => handleDeletePoint(point.id)}
-                          >
-                            삭제
-                          </button>
+                            <button
+                              type="button"
+                              className="delete-button"
+                              onClick={() => handleDeletePoint(point.id)}
+                            >
+                              삭제
+                            </button>
+                          </div>
+                          <div className="contract-ending-row">
+                            <label className="point-check">
+                              <input
+                                type="checkbox"
+                                checked={point.isContractEnding === true}
+                                onChange={(event) =>
+                                  handleContractEndingChange(point.id, event.target.checked)
+                                }
+                              />
+                              <span>계약 종료</span>
+                            </label>
+                          </div>
                         </div>
                       </li>
                     ))}
