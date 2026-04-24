@@ -75,6 +75,97 @@
   padding-bottom: 4px;
 }
 
+.analyze-section-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.analyze-section-tab,
+.contract-status-filter {
+  border: 1px solid #d7dde3;
+  border-radius: 999px;
+  background: #fff;
+  color: #264653;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.analyze-section-tab.is-active,
+.contract-status-filter.is-active {
+  background: #264653;
+  border-color: #264653;
+  color: #fff;
+}
+
+.contract-status-board {
+  display: grid;
+  gap: 12px;
+}
+
+.contract-status-debug {
+  font-size: 0.8rem;
+  color: #52616b;
+}
+
+.contract-status-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.contract-download-button {
+  margin-left: auto;
+  border: 1px solid #1f7a3d;
+  border-radius: 8px;
+  background: #217346;
+  color: #ffffff;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.contract-status-table-wrap {
+  overflow: auto;
+  border: 1px solid #e7ebef;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.contract-status-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.contract-status-table th,
+.contract-status-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef1f4;
+  text-align: left;
+  font-size: 0.8rem;
+  color: #264653;
+  white-space: nowrap;
+}
+
+.contract-status-table th {
+  background: #f8fafc;
+  font-weight: 700;
+  color: #14213d;
+}
+
+.contract-status-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 .analyze-card {
   min-width: 0;
   max-height: 460px;
@@ -236,6 +327,22 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+}
+
+.display-options-section {
+  display: grid;
+  gap: 8px;
+}
+
+.display-options-section-contract {
+  padding-top: 8px;
+  border-top: 1px solid #e7ebef;
+}
+
+.display-options-section-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #14213d;
 }
 
 .chart-axis-label {

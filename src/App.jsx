@@ -76,6 +76,13 @@ const CONNECTION_GROUP_COLORS = [
   '#475569',
 ]
 const CONTRACT_ENDING_COLOR = '#b8bcc3'
+const CONTRACT_STATUS_MAP = {
+  재계약: 'renewal',
+  '계약 종료': 'terminated',
+  '신규 계약': 'new',
+  '협의 중': 'negotiating',
+  '진행 중': 'negotiating',
+}
 
 const EMPTY_FORM = {
   name: '',
@@ -98,6 +105,17 @@ const TAB_OPTIONS = {
   dashboard: 'dashboard',
   analyze: 'analyze',
 }
+const ANALYZE_SECTION_OPTIONS = {
+  quadrant: 'quadrant',
+  contract: 'contract',
+}
+const CONTRACT_FILTER_OPTIONS = [
+  { id: 'all', label: '전체', value: 'all' },
+  { id: 'renewal', label: '재계약', value: 'renewal' },
+  { id: 'terminated', label: '계약 종료', value: 'terminated' },
+  { id: 'new', label: '신규 계약', value: 'new' },
+  { id: 'negotiating', label: '협의 중', value: 'negotiating' },
+]
 const DEFAULT_GRAPH_STATE = defaultGraphStateData.state
 
 function clamp(value, min, max) {
@@ -120,6 +138,192 @@ function createPoint(name, x, y, color) {
     y,
     color,
     isContractEnding: false,
+    contractStatus: '',
+    contractEndDate: '',
+    contractApplyDate: '',
+    contractBeforePrice: '',
+    contractAfterPrice: '',
+    contractIncreaseRate: '',
+  }
+}
+
+function sanitizeContractValue(value) {
+  if (value === null || value === undefined) {
+    return ''
+  }
+
+  return String(value).trim()
+}
+
+function formatContractDate(value) {
+  if (value === null || value === undefined || value === '') {
+    return ''
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsedDate = XLSX.SSF.parse_date_code(value)
+
+    if (parsedDate?.y && parsedDate?.m && parsedDate?.d) {
+      return `${parsedDate.y}-${String(parsedDate.m).padStart(2, '0')}-${String(parsedDate.d).padStart(2, '0')}`
+    }
+  }
+
+  const normalized = sanitizeContractValue(value)
+  const normalizedDelimiter = normalized.replace(/[./]/g, '-').replace(/\s+/g, '')
+  const yearFirstMatch = normalizedDelimiter.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+
+  if (yearFirstMatch) {
+    const [, year, month, day] = yearFirstMatch
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+
+  const date = new Date(normalized)
+
+  if (Number.isNaN(date.getTime())) {
+    return normalized
+  }
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+
+  return `${year}-${month}-${day}`
+}
+
+function normalizeContractStatus(value) {
+  const normalized = sanitizeContractValue(value)
+
+  if (normalized.includes('신규')) {
+    return 'new'
+  }
+
+  return CONTRACT_STATUS_MAP[normalized] ?? ''
+}
+
+function getHotelNameMatchVariants(value) {
+  const raw = sanitizeContractValue(value).toLocaleLowerCase('ko')
+  const collapsed = raw.replace(/\s+/g, '')
+  const withoutParentheses = collapsed.replace(/\([^)]*\)/g, '')
+  const sanitizedCollapsed = collapsed.replace(/[^0-9a-z가-힣]/gi, '')
+  const sanitizedWithoutParentheses = withoutParentheses.replace(/[^0-9a-z가-힣]/gi, '')
+
+  return Array.from(
+    new Set([sanitizedWithoutParentheses, sanitizedCollapsed].filter(Boolean)),
+  )
+}
+
+function getDiceCoefficient(left, right) {
+  if (!left || !right) {
+    return 0
+  }
+
+  if (left === right) {
+    return 1
+  }
+
+  if (left.length < 2 || right.length < 2) {
+    return left === right ? 1 : 0
+  }
+
+  const leftBigrams = new Map()
+
+  for (let index = 0; index < left.length - 1; index += 1) {
+    const gram = left.slice(index, index + 2)
+    leftBigrams.set(gram, (leftBigrams.get(gram) ?? 0) + 1)
+  }
+
+  let intersection = 0
+
+  for (let index = 0; index < right.length - 1; index += 1) {
+    const gram = right.slice(index, index + 2)
+    const count = leftBigrams.get(gram) ?? 0
+
+    if (count > 0) {
+      leftBigrams.set(gram, count - 1)
+      intersection += 1
+    }
+  }
+
+  return (2 * intersection) / ((left.length - 1) + (right.length - 1))
+}
+
+function findBestMatchingPoint(customerName, targetPoints) {
+  const customerVariants = getHotelNameMatchVariants(customerName)
+
+  if (!customerVariants.length) {
+    return null
+  }
+
+  let bestMatch = null
+
+  targetPoints.forEach((point) => {
+    const targetName = sanitizeContractValue(point.name ?? point.hotelName)
+    const targetVariants = getHotelNameMatchVariants(targetName)
+
+    if (!targetVariants.length) {
+      return
+    }
+
+    let bestScoreForPoint = 0
+    let matchType = 'fuzzy'
+
+    customerVariants.forEach((customerVariant) => {
+      targetVariants.forEach((targetVariant) => {
+        if (customerVariant === targetVariant) {
+          bestScoreForPoint = 1
+          matchType = 'exact'
+          return
+        }
+
+        if (
+          customerVariant.length >= 2 &&
+          targetVariant.length >= 2 &&
+          (customerVariant.includes(targetVariant) || targetVariant.includes(customerVariant))
+        ) {
+          if (bestScoreForPoint < 0.92) {
+            bestScoreForPoint = 0.92
+            matchType = 'fuzzy'
+          }
+          return
+        }
+
+        const similarity = getDiceCoefficient(customerVariant, targetVariant)
+
+        if (similarity > bestScoreForPoint) {
+          bestScoreForPoint = similarity
+          matchType = 'fuzzy'
+        }
+      })
+    })
+
+    if (!bestMatch || bestScoreForPoint > bestMatch.score) {
+      bestMatch = {
+        pointId: point.id,
+        score: bestScoreForPoint,
+        matchType,
+      }
+    }
+  })
+
+  if (!bestMatch || bestMatch.score < 0.6) {
+    return null
+  }
+
+  return bestMatch
+}
+
+function getContractStatusLabel(value) {
+  switch (value) {
+    case 'renewal':
+      return '재계약'
+    case 'terminated':
+      return '계약 종료'
+    case 'new':
+      return '신규 계약'
+    case 'negotiating':
+      return '협의 중'
+    default:
+      return ''
   }
 }
 
@@ -157,6 +361,12 @@ function normalizeGraphState(state) {
             color: point?.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length],
             visible: point?.visible !== false,
             isContractEnding: point?.isContractEnding === true,
+            contractStatus: sanitizeContractValue(point?.contractStatus),
+            contractEndDate: formatContractDate(point?.contractEndDate),
+            contractApplyDate: formatContractDate(point?.contractApplyDate),
+            contractBeforePrice: point?.contractBeforePrice ?? '',
+            contractAfterPrice: point?.contractAfterPrice ?? '',
+            contractIncreaseRate: sanitizeContractValue(point?.contractIncreaseRate),
           }
         })
         .filter(Boolean)
@@ -219,6 +429,11 @@ function normalizeGraphState(state) {
     showConnectedOnly: Boolean(state.showConnectedOnly),
     showMovingQuadrantOnly: Boolean(state.showMovingQuadrantOnly),
     showOnlyContractEnding: Boolean(state.showOnlyContractEnding),
+    selectedContractStatuses: Array.isArray(state.selectedContractStatuses)
+      ? state.selectedContractStatuses.filter((status) =>
+          ['renewal', 'terminated', 'new', 'negotiating'].includes(status),
+        )
+      : [],
     showSecondaryQuadrants: Boolean(state.showSecondaryQuadrants),
     pointSortOrder: Object.values(SORT_OPTIONS).includes(state.pointSortOrder)
       ? state.pointSortOrder
@@ -1220,6 +1435,9 @@ function App() {
   const [showOnlyContractEnding, setShowOnlyContractEnding] = useState(
     () => initialGraphStateRef.current.showOnlyContractEnding ?? false,
   )
+  const [selectedContractStatuses, setSelectedContractStatuses] = useState(
+    () => initialGraphStateRef.current.selectedContractStatuses ?? [],
+  )
   const [errorMessage, setErrorMessage] = useState('')
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
@@ -1248,6 +1466,8 @@ function App() {
   )
   const [isDisplayPanelOpen, setIsDisplayPanelOpen] = useState(false)
   const [activeTab, setActiveTab] = useState(TAB_OPTIONS.dashboard)
+  const [analyzeSection, setAnalyzeSection] = useState(ANALYZE_SECTION_OPTIONS.quadrant)
+  const [contractStatusFilter, setContractStatusFilter] = useState('all')
   const [isRemoteHydrating, setIsRemoteHydrating] = useState(true)
   const [hasRemoteUpdate, setHasRemoteUpdate] = useState(false)
 
@@ -1440,10 +1660,42 @@ function App() {
     [connections, movingQuadrantConnectionIds],
   )
 
+  const baseContractPointIds = useMemo(() => {
+    if (!selectedContractStatuses.length) {
+      return null
+    }
+
+    return new Set(
+      graphPoints
+        .filter((point) => selectedContractStatuses.includes(point.contractStatus))
+        .map((point) => point.id),
+    )
+  }, [graphPoints, selectedContractStatuses])
+
+  const expandedContractPointIds = useMemo(() => {
+    if (!baseContractPointIds) {
+      return null
+    }
+
+    const expandedIds = new Set(baseContractPointIds)
+
+    connections.forEach((connection) => {
+      if (
+        baseContractPointIds.has(connection.fromId) ||
+        baseContractPointIds.has(connection.toId)
+      ) {
+        expandedIds.add(connection.fromId)
+        expandedIds.add(connection.toId)
+      }
+    })
+
+    return expandedIds
+  }, [baseContractPointIds, connections])
+
   const visiblePoints = useMemo(
     () =>
       graphPoints.filter((point) => {
-        if (showOnlyContractEnding && point.isContractEnding !== true) {
+        if (expandedContractPointIds && !expandedContractPointIds.has(point.id)) {
           return false
         }
 
@@ -1465,9 +1717,9 @@ function App() {
       quadrantVisibility,
       showConnectedOnly,
       showMovingQuadrantOnly,
-      showOnlyContractEnding,
       connectedPointIds,
       movingQuadrantPointIds,
+      expandedContractPointIds,
     ],
   )
 
@@ -1744,6 +1996,31 @@ function App() {
     [connections],
   )
 
+  const contractAnalyzePoints = useMemo(
+    () =>
+      points.filter((point) =>
+        ['renewal', 'terminated', 'new', 'negotiating'].includes(point.contractStatus),
+      ),
+    [points],
+  )
+
+  const filteredContractAnalyzePoints = useMemo(
+    () =>
+      contractAnalyzePoints.filter((point) =>
+        contractStatusFilter === 'all' ? true : point.contractStatus === contractStatusFilter,
+      ),
+    [contractAnalyzePoints, contractStatusFilter],
+  )
+
+  const contractAnalyzeSummary = useMemo(
+    () => ({
+      totalHotels: points.length,
+      contractHotels: contractAnalyzePoints.length,
+      newHotels: points.filter((point) => point.contractStatus === 'new').length,
+    }),
+    [points, contractAnalyzePoints],
+  )
+
   const fetchCurrentStateFromDb = async () => {
     if (!supabase) {
       console.error('[supabase-debug] fetch skipped: client unavailable', {
@@ -1792,6 +2069,7 @@ function App() {
       showConnectedOnly,
       showMovingQuadrantOnly,
       showOnlyContractEnding,
+      selectedContractStatuses,
       showSecondaryQuadrants,
       pointSortOrder,
       pointSearchQuery,
@@ -1800,6 +2078,7 @@ function App() {
         showConnectedOnly,
         showMovingQuadrantOnly,
         showOnlyContractEnding,
+        selectedContractStatuses,
         showSecondaryQuadrants,
         quadrantVisibility,
       },
@@ -1829,6 +2108,7 @@ function App() {
     setShowConnectedOnly(normalized.showConnectedOnly)
     setShowMovingQuadrantOnly(normalized.showMovingQuadrantOnly)
     setShowOnlyContractEnding(normalized.showOnlyContractEnding)
+    setSelectedContractStatuses(normalized.selectedContractStatuses ?? [])
     setShowSecondaryQuadrants(normalized.showSecondaryQuadrants)
     setPointSortOrder(normalized.pointSortOrder ?? SORT_OPTIONS.nameAsc)
     setPointSearchQuery(normalized.pointSearchQuery ?? '')
@@ -2343,6 +2623,33 @@ function App() {
     }
   }
 
+  const handleDownloadContractExcel = () => {
+    if (!filteredContractAnalyzePoints.length) {
+      setErrorMessage('다운로드할 계약 자료가 없습니다.')
+      return
+    }
+
+    const filterLabel =
+      CONTRACT_FILTER_OPTIONS.find((option) => option.value === contractStatusFilter)?.label ?? '전체'
+
+    const rows = filteredContractAnalyzePoints.map((point) => ({
+      호텔명: point.name,
+      계약상태: getContractStatusLabel(point.contractStatus),
+      계약만료일: formatContractDate(point.contractEndDate),
+      적용일자: formatContractDate(point.contractApplyDate),
+      계약전단가: point.contractBeforePrice ?? '',
+      계약후단가: point.contractAfterPrice ?? '',
+      인상률: point.contractIncreaseRate ?? '',
+    }))
+
+    const worksheet = XLSX.utils.json_to_sheet(rows)
+    const workbook = XLSX.utils.book_new()
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, '계약현황')
+    XLSX.writeFile(workbook, `계약현황_${filterLabel.replace(/\s+/g, '')}.xlsx`)
+    setErrorMessage('')
+  }
+
   const handleFileUpload = async (event) => {
     const [file] = event.target.files ?? []
 
@@ -2383,6 +2690,24 @@ function App() {
           )
         })
         .filter(Boolean)
+        .map((nextPoint) => {
+          const existingPoint = points.find((point) => point.name === nextPoint.name)
+
+          if (!existingPoint) {
+            return nextPoint
+          }
+
+          return {
+            ...nextPoint,
+            contractStatus: existingPoint.contractStatus ?? '',
+            contractEndDate: existingPoint.contractEndDate ?? '',
+            contractApplyDate: existingPoint.contractApplyDate ?? '',
+            contractBeforePrice: existingPoint.contractBeforePrice ?? '',
+            contractAfterPrice: existingPoint.contractAfterPrice ?? '',
+            contractIncreaseRate: existingPoint.contractIncreaseRate ?? '',
+            isContractEnding: existingPoint.isContractEnding === true,
+          }
+        })
 
       if (!nextPoints.length) {
         throw new Error('no-valid-rows')
@@ -2393,6 +2718,133 @@ function App() {
       setErrorMessage('')
     } catch {
       setErrorMessage('엑셀 업로드에 실패했습니다.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const handleContractFileUpload = async (event) => {
+    const [file] = event.target.files ?? []
+
+    if (!file) {
+      return
+    }
+
+    try {
+      const buffer = await file.arrayBuffer()
+      const workbook = XLSX.read(buffer, { type: 'array' })
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+
+      if (!firstSheet) {
+        throw new Error('no-sheet')
+      }
+
+      const rows = XLSX.utils.sheet_to_json(firstSheet, {
+        defval: '',
+        raw: false,
+      })
+
+      let exactMatchedCount = 0
+      let fuzzyMatchedCount = 0
+      let createdNewCount = 0
+      let skippedCount = 0
+
+      const nextPoints = points.map((point) => ({ ...point }))
+
+      rows.forEach((row) => {
+        const rawCustomerName = String(row['호텔명'] ?? row['고객사명'] ?? '').trim()
+        const customerName = sanitizeContractValue(row['호텔명'] ?? row['고객사명'])
+        const rawStatus = String(row['상태'] || '').trim()
+        const isNewContract = rawStatus.includes('신규')
+        const contractStatus = isNewContract ? 'new' : normalizeContractStatus(rawStatus)
+
+        console.log('[contract-upload] row status', {
+          customerName: rawCustomerName,
+          rawStatus,
+          isNewContract,
+          normalizedStatus: contractStatus,
+        })
+
+        if (!rawCustomerName) {
+          skippedCount += 1
+          return
+        }
+
+        if (isNewContract || contractStatus === 'new') {
+          const exactPointIndex = nextPoints.findIndex((point) => point.name === rawCustomerName)
+
+          if (exactPointIndex >= 0) {
+            nextPoints[exactPointIndex] = {
+              ...nextPoints[exactPointIndex],
+              contractStatus,
+              contractEndDate: formatContractDate(row['계약만료일']),
+              contractApplyDate: formatContractDate(row['적용일자']),
+              contractBeforePrice: row['계약전 단가'] ?? '',
+              contractAfterPrice: row['계약후 단가'] ?? '',
+              contractIncreaseRate: sanitizeContractValue(row['인상률']),
+            }
+            exactMatchedCount += 1
+            console.log('[contract-upload] new-contract exact update', {
+              customerName: rawCustomerName,
+            })
+            return
+          }
+
+          skippedCount += 1
+          console.log('[contract-upload] new-contract skipped: no existing point', {
+            customerName: rawCustomerName,
+          })
+          return
+        }
+
+        const matched = findBestMatchingPoint(customerName, nextPoints)
+
+        if (matched) {
+          const pointIndex = nextPoints.findIndex((point) => point.id === matched.pointId)
+
+          if (pointIndex >= 0) {
+            nextPoints[pointIndex] = {
+              ...nextPoints[pointIndex],
+              contractStatus,
+              contractEndDate: formatContractDate(row['계약만료일']),
+              contractApplyDate: formatContractDate(row['적용일자']),
+              contractBeforePrice: row['계약전 단가'] ?? '',
+              contractAfterPrice: row['계약후 단가'] ?? '',
+              contractIncreaseRate: sanitizeContractValue(row['인상률']),
+            }
+
+            if (matched.matchType === 'exact') {
+              exactMatchedCount += 1
+            } else {
+              fuzzyMatchedCount += 1
+            }
+            return
+          }
+        }
+
+        skippedCount += 1
+      })
+
+      const nextState = buildGraphState(nextPoints, connections)
+      const contractHotels = nextState.points.filter((point) => point.contractStatus)
+
+      setActiveSavedGraphId(null)
+      setPoints(nextState.points)
+      console.log('[DEBUG] contract result', contractHotels)
+      console.log('[contract-upload] contract hotels', contractHotels)
+      console.log('[contract-upload] summary', {
+        totalRows: rows.length,
+        exactMatchedCount,
+        fuzzyMatchedCount,
+        createdNewCount,
+        skippedCount,
+      })
+      await saveCurrentState(nextState)
+      setErrorMessage(
+        `계약 자료 업로드 완료 (정확 매칭 ${exactMatchedCount}건, 유사도 매칭 ${fuzzyMatchedCount}건, 신규 계약 추가 ${createdNewCount}건, 제외 ${skippedCount}건)`,
+      )
+    } catch {
+      setErrorMessage('계약 자료 업로드에 실패했습니다.')
     } finally {
       event.target.value = ''
     }
@@ -2469,6 +2921,8 @@ function App() {
                   </button>
                 </div>
                 <div className="display-options-form">
+                  <div className="display-options-section">
+                    <strong className="display-options-section-title">점 표시 옵션</strong>
                   <label className="toggle-field">
                     <input
                       type="checkbox"
@@ -2501,21 +2955,74 @@ function App() {
                           setActiveSavedGraphId(null)
                           setShowMovingQuadrantOnly(event.target.checked)
                         }}
-                      />
-                      <span>분면 이동 점만 표시</span>
-                    </label>
+                    />
+                    <span>분면 이동 점만 표시</span>
+                  </label>
+                  </div>
 
+                  <div className="display-options-section display-options-section-contract">
+                    <strong className="display-options-section-title">계약 표시 옵션</strong>
                     <label className="toggle-field">
                       <input
                         type="checkbox"
-                        checked={showOnlyContractEnding}
+                        checked={selectedContractStatuses.includes('renewal')}
                         onChange={(event) => {
                           setActiveSavedGraphId(null)
-                          setShowOnlyContractEnding(event.target.checked)
+                          setSelectedContractStatuses((current) =>
+                            event.target.checked
+                              ? Array.from(new Set([...current, 'renewal']))
+                              : current.filter((status) => status !== 'renewal'),
+                          )
                         }}
                       />
-                      <span>계약 종료 호텔만 표시</span>
+                      <span>재계약</span>
                     </label>
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={selectedContractStatuses.includes('terminated')}
+                        onChange={(event) => {
+                          setActiveSavedGraphId(null)
+                          setSelectedContractStatuses((current) =>
+                            event.target.checked
+                              ? Array.from(new Set([...current, 'terminated']))
+                              : current.filter((status) => status !== 'terminated'),
+                          )
+                        }}
+                      />
+                      <span>계약 종료</span>
+                    </label>
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={selectedContractStatuses.includes('new')}
+                        onChange={(event) => {
+                          setActiveSavedGraphId(null)
+                          setSelectedContractStatuses((current) =>
+                            event.target.checked
+                              ? Array.from(new Set([...current, 'new']))
+                              : current.filter((status) => status !== 'new'),
+                          )
+                        }}
+                      />
+                      <span>신규 계약</span>
+                    </label>
+                    <label className="toggle-field">
+                      <input
+                        type="checkbox"
+                        checked={selectedContractStatuses.includes('negotiating')}
+                        onChange={(event) => {
+                          setActiveSavedGraphId(null)
+                          setSelectedContractStatuses((current) =>
+                            event.target.checked
+                              ? Array.from(new Set([...current, 'negotiating']))
+                              : current.filter((status) => status !== 'negotiating'),
+                          )
+                        }}
+                      />
+                      <span>협의 중</span>
+                    </label>
+                  </div>
 
                   <div className="quadrant-filter-group">
                     <div className="quadrant-filter-header">
@@ -2809,8 +3316,12 @@ function App() {
                 그래프 이미지 다운로드
               </button>
               <label className="file-field">
-                <span>엑셀 업로드</span>
+                <span>점수 업로드</span>
                 <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} />
+              </label>
+              <label className="file-field">
+                <span>계약 자료 업로드</span>
+                <input type="file" accept=".xlsx,.xls" onChange={handleContractFileUpload} />
               </label>
               {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
             </form>
@@ -3111,41 +3622,116 @@ function App() {
                 <span>2차 사분면 표시</span>
               </label>
             </div>
-            <div className="analyze-board">
-              {analyzeQuadrantGroups.map((group) => (
-                <section key={group.id} className="analyze-card">
-                  <header className="analyze-card-header">
-                    <strong>{group.label}</strong>
-                    <span>{group.items.length}개</span>
-                  </header>
-                  <div className="analyze-card-body">
-                    {group.items.length ? (
-                      <ul className="analyze-list">
-                          {group.items.map((point) => {
-                            const analyzeItemStyle = getAnalyzeItemStyle(
-                              point,
-                              analyzeHighlightIds,
-                              displayColorMap,
-                            )
-
-                            return (
-                            <li
-                              key={point.id}
-                              className={`analyze-item ${analyzeItemStyle ? 'is-tinted' : ''}`}
-                              style={analyzeItemStyle ?? undefined}
-                            >
-                              <span className="analyze-item-name">{point.name}</span>
-                            </li>
-                            )
-                          })}
-                      </ul>
-                    ) : (
-                      <p className="analyze-empty">해당 호텔 없음</p>
-                    )}
-                  </div>
-                </section>
-              ))}
+            <div className="analyze-section-tabs">
+              <button
+                type="button"
+                className={`analyze-section-tab ${analyzeSection === ANALYZE_SECTION_OPTIONS.quadrant ? 'is-active' : ''}`}
+                onClick={() => setAnalyzeSection(ANALYZE_SECTION_OPTIONS.quadrant)}
+              >
+                사분면 분석
+              </button>
+              <button
+                type="button"
+                className={`analyze-section-tab ${analyzeSection === ANALYZE_SECTION_OPTIONS.contract ? 'is-active' : ''}`}
+                onClick={() => setAnalyzeSection(ANALYZE_SECTION_OPTIONS.contract)}
+              >
+                계약 현황
+              </button>
             </div>
+            {analyzeSection === ANALYZE_SECTION_OPTIONS.quadrant ? (
+              <div className="analyze-board">
+                {analyzeQuadrantGroups.map((group) => (
+                  <section key={group.id} className="analyze-card">
+                    <header className="analyze-card-header">
+                      <strong>{group.label}</strong>
+                      <span>{group.items.length}개</span>
+                    </header>
+                    <div className="analyze-card-body">
+                      {group.items.length ? (
+                        <ul className="analyze-list">
+                            {group.items.map((point) => {
+                              const analyzeItemStyle = getAnalyzeItemStyle(
+                                point,
+                                analyzeHighlightIds,
+                                displayColorMap,
+                              )
+
+                              return (
+                              <li
+                                key={point.id}
+                                className={`analyze-item ${analyzeItemStyle ? 'is-tinted' : ''}`}
+                                style={analyzeItemStyle ?? undefined}
+                              >
+                                <span className="analyze-item-name">{point.name}</span>
+                              </li>
+                              )
+                            })}
+                        </ul>
+                      ) : (
+                        <p className="analyze-empty">해당 호텔 없음</p>
+                      )}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            ) : (
+              <section className="contract-status-board">
+                <div className="contract-status-debug">
+                  전체 호텔: {contractAnalyzeSummary.totalHotels}개 / 계약 정보: {contractAnalyzeSummary.contractHotels}개 / 신규 계약: {contractAnalyzeSummary.newHotels}개
+                </div>
+                <div className="contract-status-filters">
+                  {CONTRACT_FILTER_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`contract-status-filter ${contractStatusFilter === option.value ? 'is-active' : ''}`}
+                      onClick={() => setContractStatusFilter(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="contract-download-button"
+                    onClick={handleDownloadContractExcel}
+                  >
+                    엑셀 다운로드
+                  </button>
+                </div>
+                <div className="contract-status-table-wrap">
+                  {filteredContractAnalyzePoints.length ? (
+                    <table className="contract-status-table">
+                      <thead>
+                        <tr>
+                          <th>호텔명</th>
+                          <th>계약 상태</th>
+                          <th>계약만료일</th>
+                          <th>적용일자</th>
+                          <th>계약전 단가</th>
+                          <th>계약후 단가</th>
+                          <th>인상률</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredContractAnalyzePoints.map((point) => (
+                          <tr key={`contract-${point.id}`}>
+                            <td>{point.name}</td>
+                            <td>{getContractStatusLabel(point.contractStatus)}</td>
+                            <td>{formatContractDate(point.contractEndDate) || '-'}</td>
+                            <td>{formatContractDate(point.contractApplyDate) || '-'}</td>
+                            <td>{point.contractBeforePrice || '-'}</td>
+                            <td>{point.contractAfterPrice || '-'}</td>
+                            <td>{point.contractIncreaseRate || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="analyze-empty">표시할 계약 자료가 없습니다</p>
+                  )}
+                </div>
+              </section>
+            )}
           </section>
         )}
       </section>
