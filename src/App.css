@@ -176,6 +176,28 @@
   border-bottom: 0;
 }
 
+.upload-debug-panel {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #f0d7d7;
+  border-radius: 10px;
+  background: #fff8f8;
+  color: #8a3b3b;
+  font-size: 0.78rem;
+}
+
+.upload-debug-panel strong {
+  color: #a12f2f;
+}
+
+.upload-debug-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
 .analyze-card {
   min-width: 0;
   max-height: 460px;

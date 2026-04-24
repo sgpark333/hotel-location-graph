@@ -148,6 +148,10 @@ function createPoint(name, x, y, color) {
     contractBeforePrice: '',
     contractAfterPrice: '',
     contractIncreaseRate: '',
+    revenueLabel: '',
+    revenueAmount: '',
+    increasedRevenueAmount: '',
+    expectedIncreaseRevenueAmount: '',
   }
 }
 
@@ -340,7 +344,12 @@ function parseContractNumericValue(value) {
     return value
   }
 
-  const normalized = sanitizeContractValue(value).replace(/,/g, '').replace(/%/g, '')
+  const normalized = sanitizeContractValue(value)
+    .replace(/,/g, '')
+    .replace(/%/g, '')
+    .replace(/원/g, '')
+    .replace(/\s+/g, '')
+    .replace(/[^\d.-]/g, '')
   const parsed = Number(normalized)
 
   return Number.isFinite(parsed) ? parsed : null
@@ -355,6 +364,64 @@ function parseContractDateValue(value) {
 
   const timestamp = new Date(formatted).getTime()
   return Number.isFinite(timestamp) ? timestamp : null
+}
+
+function compareNullableNumbers(leftValue, rightValue, direction) {
+  const leftMissing = leftValue === null || leftValue === undefined
+  const rightMissing = rightValue === null || rightValue === undefined
+
+  if (leftMissing && rightMissing) {
+    return 0
+  }
+
+  if (leftMissing) {
+    return 1
+  }
+
+  if (rightMissing) {
+    return -1
+  }
+
+  return (leftValue - rightValue) * direction
+}
+
+function formatCurrency(value) {
+  if (value === null || value === undefined || value === '') {
+    return ''
+  }
+
+  const number = Number(value)
+
+  if (Number.isNaN(number)) {
+    return value
+  }
+
+  return `${number.toLocaleString('ko-KR')}원`
+}
+
+function normalizeContractOnlyEntry(entry) {
+  const name = String(entry?.name ?? '').trim()
+  const contractStatus = sanitizeContractValue(entry?.contractStatus)
+
+  if (!name || !['renewal', 'terminated', 'new', 'negotiating'].includes(contractStatus)) {
+    return null
+  }
+
+  return {
+    id: entry?.id || crypto.randomUUID(),
+    name,
+    contractStatus,
+    contractEndDate: formatContractDate(entry?.contractEndDate),
+    contractApplyDate: formatContractDate(entry?.contractApplyDate),
+    contractBeforePrice: entry?.contractBeforePrice ?? '',
+    contractAfterPrice: entry?.contractAfterPrice ?? '',
+    contractIncreaseRate: sanitizeContractValue(entry?.contractIncreaseRate),
+    revenueLabel: sanitizeContractValue(entry?.revenueLabel),
+    revenueAmount: entry?.revenueAmount ?? '',
+    increasedRevenueAmount: entry?.increasedRevenueAmount ?? '',
+    expectedIncreaseRevenueAmount: entry?.expectedIncreaseRevenueAmount ?? '',
+    hasPoint: false,
+  }
 }
 
 function createDefaultGraphState() {
@@ -397,6 +464,10 @@ function normalizeGraphState(state) {
             contractBeforePrice: point?.contractBeforePrice ?? '',
             contractAfterPrice: point?.contractAfterPrice ?? '',
             contractIncreaseRate: sanitizeContractValue(point?.contractIncreaseRate),
+            revenueLabel: sanitizeContractValue(point?.revenueLabel),
+            revenueAmount: point?.revenueAmount ?? '',
+            increasedRevenueAmount: point?.increasedRevenueAmount ?? '',
+            expectedIncreaseRevenueAmount: point?.expectedIncreaseRevenueAmount ?? '',
           }
         })
         .filter(Boolean)
@@ -406,6 +477,9 @@ function normalizeGraphState(state) {
 
   return {
     points,
+    contractOnlyEntries: Array.isArray(state.contractOnlyEntries)
+      ? state.contractOnlyEntries.map(normalizeContractOnlyEntry).filter(Boolean)
+      : [],
     connections: Array.isArray(state.connections)
       ? state.connections
           .filter(
@@ -1445,6 +1519,9 @@ function App() {
   const activeLabelRef = useRef(null)
   const lastAppliedRemoteUpdatedAtRef = useRef(null)
   const [points, setPoints] = useState(() => initialGraphStateRef.current.points)
+  const [contractOnlyEntries, setContractOnlyEntries] = useState(
+    () => initialGraphStateRef.current.contractOnlyEntries ?? [],
+  )
   const [editMode, setEditMode] = useState(false)
   const [draftPoints, setDraftPoints] = useState([])
   const [connections, setConnections] = useState(() => initialGraphStateRef.current.connections)
@@ -1469,6 +1546,7 @@ function App() {
     () => initialGraphStateRef.current.selectedContractStatuses ?? [],
   )
   const [errorMessage, setErrorMessage] = useState('')
+  const [contractUploadSkippedRows, setContractUploadSkippedRows] = useState([])
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const [renderedPointMap, setRenderedPointMap] = useState({})
   const [labelOffsets, setLabelOffsets] = useState(() => initialGraphStateRef.current.labelOffsets)
@@ -2030,10 +2108,10 @@ function App() {
 
   const contractAnalyzePoints = useMemo(
     () =>
-      points.filter((point) =>
+      [...points, ...contractOnlyEntries].filter((point) =>
         ['renewal', 'terminated', 'new', 'negotiating'].includes(point.contractStatus),
       ),
-    [points],
+    [points, contractOnlyEntries],
   )
 
   const filteredContractAnalyzePoints = useMemo(
@@ -2042,6 +2120,19 @@ function App() {
         contractStatusFilter === 'all' ? true : point.contractStatus === contractStatusFilter,
       ),
     [contractAnalyzePoints, contractStatusFilter],
+  )
+
+  const contractRevenueLabel = useMemo(
+    () => {
+      const activeRevenueLabel =
+        filteredContractAnalyzePoints.find((point) => sanitizeContractValue(point.revenueLabel))
+          ?.revenueLabel ??
+        contractAnalyzePoints.find((point) => sanitizeContractValue(point.revenueLabel))
+          ?.revenueLabel
+
+      return activeRevenueLabel || '매출'
+    },
+    [contractAnalyzePoints, filteredContractAnalyzePoints],
   )
 
   const sortedContractAnalyzePoints = useMemo(() => {
@@ -2065,32 +2156,62 @@ function App() {
           getContractStatusLabel(right.contractStatus),
         )
       } else if (contractSortKey === 'contractEndDate') {
-        compareResult =
-          (parseContractDateValue(left.contractEndDate) ?? Number.POSITIVE_INFINITY) -
-          (parseContractDateValue(right.contractEndDate) ?? Number.POSITIVE_INFINITY)
+        compareResult = compareNullableNumbers(
+          parseContractDateValue(left.contractEndDate),
+          parseContractDateValue(right.contractEndDate),
+          direction,
+        )
       } else if (contractSortKey === 'contractApplyDate') {
-        compareResult =
-          (parseContractDateValue(left.contractApplyDate) ?? Number.POSITIVE_INFINITY) -
-          (parseContractDateValue(right.contractApplyDate) ?? Number.POSITIVE_INFINITY)
+        compareResult = compareNullableNumbers(
+          parseContractDateValue(left.contractApplyDate),
+          parseContractDateValue(right.contractApplyDate),
+          direction,
+        )
       } else if (contractSortKey === 'contractBeforePrice') {
-        compareResult =
-          (parseContractNumericValue(left.contractBeforePrice) ?? Number.POSITIVE_INFINITY) -
-          (parseContractNumericValue(right.contractBeforePrice) ?? Number.POSITIVE_INFINITY)
+        compareResult = compareNullableNumbers(
+          parseContractNumericValue(left.contractBeforePrice),
+          parseContractNumericValue(right.contractBeforePrice),
+          direction,
+        )
       } else if (contractSortKey === 'contractAfterPrice') {
-        compareResult =
-          (parseContractNumericValue(left.contractAfterPrice) ?? Number.POSITIVE_INFINITY) -
-          (parseContractNumericValue(right.contractAfterPrice) ?? Number.POSITIVE_INFINITY)
+        compareResult = compareNullableNumbers(
+          parseContractNumericValue(left.contractAfterPrice),
+          parseContractNumericValue(right.contractAfterPrice),
+          direction,
+        )
       } else if (contractSortKey === 'contractIncreaseRate') {
-        compareResult =
-          (parseContractNumericValue(left.contractIncreaseRate) ?? Number.POSITIVE_INFINITY) -
-          (parseContractNumericValue(right.contractIncreaseRate) ?? Number.POSITIVE_INFINITY)
+        compareResult = compareNullableNumbers(
+          parseContractNumericValue(left.contractIncreaseRate),
+          parseContractNumericValue(right.contractIncreaseRate),
+          direction,
+        )
+      } else if (contractSortKey === 'revenueAmount') {
+        compareResult = compareNullableNumbers(
+          parseContractNumericValue(left.revenueAmount),
+          parseContractNumericValue(right.revenueAmount),
+          direction,
+        )
+      } else if (contractSortKey === 'increasedRevenueAmount') {
+        compareResult = compareNullableNumbers(
+          parseContractNumericValue(left.increasedRevenueAmount),
+          parseContractNumericValue(right.increasedRevenueAmount),
+          direction,
+        )
+      } else if (contractSortKey === 'expectedIncreaseRevenueAmount') {
+        compareResult = compareNullableNumbers(
+          parseContractNumericValue(left.expectedIncreaseRevenueAmount),
+          parseContractNumericValue(right.expectedIncreaseRevenueAmount),
+          direction,
+        )
       }
 
       if (compareResult === 0) {
         compareResult = collator.compare(left.name, right.name)
       }
 
-      return compareResult * direction
+      return contractSortKey === 'name' || contractSortKey === 'contractStatus'
+        ? compareResult * direction
+        : compareResult
     })
 
     return items
@@ -2098,11 +2219,11 @@ function App() {
 
   const contractAnalyzeSummary = useMemo(
     () => ({
-      totalHotels: points.length,
+      totalHotels: points.length + contractOnlyEntries.length,
       contractHotels: contractAnalyzePoints.length,
-      newHotels: points.filter((point) => point.contractStatus === 'new').length,
+      newHotels: contractAnalyzePoints.filter((point) => point.contractStatus === 'new').length,
     }),
-    [points, contractAnalyzePoints],
+    [points, contractOnlyEntries, contractAnalyzePoints],
   )
 
   const fetchCurrentStateFromDb = async () => {
@@ -2143,9 +2264,14 @@ function App() {
     }
   }
 
-  const buildGraphState = (nextPoints = points, nextConnections = connections) =>
+  const buildGraphState = (
+    nextPoints = points,
+    nextConnections = connections,
+    nextContractOnlyEntries = contractOnlyEntries,
+  ) =>
     cloneGraphState(normalizeGraphState({
       points: nextPoints,
+      contractOnlyEntries: nextContractOnlyEntries,
       connections: nextConnections,
       labelOffsets,
       axisLabelOffsets,
@@ -2185,6 +2311,7 @@ function App() {
     setEditMode(false)
     setDraftPoints([])
     setPoints(normalized.points)
+    setContractOnlyEntries(normalized.contractOnlyEntries ?? [])
     setConnections(normalized.connections)
     setLabelOffsets(normalized.labelOffsets)
     setAxisLabelOffsets(normalized.axisLabelOffsets)
@@ -2538,9 +2665,10 @@ function App() {
       return
     }
 
-    const nextState = buildGraphState(draftPoints, connections)
+    const nextState = buildGraphState(draftPoints, connections, contractOnlyEntries)
 
     setPoints(nextState.points)
+    setContractOnlyEntries(nextState.contractOnlyEntries)
     setConnections(nextState.connections)
     setDraftPoints([])
     setEditMode(false)
@@ -2562,7 +2690,29 @@ function App() {
       return
     }
 
-    updateWorkingPoints((current) => [...current, nextPoint])
+    const matchingContractEntry = contractOnlyEntries.find((entry) => entry.name === nextPoint.name)
+    const mergedPoint = matchingContractEntry
+      ? {
+          ...nextPoint,
+          contractStatus: matchingContractEntry.contractStatus,
+          contractEndDate: matchingContractEntry.contractEndDate,
+          contractApplyDate: matchingContractEntry.contractApplyDate,
+          contractBeforePrice: matchingContractEntry.contractBeforePrice,
+          contractAfterPrice: matchingContractEntry.contractAfterPrice,
+          contractIncreaseRate: matchingContractEntry.contractIncreaseRate,
+          revenueLabel: matchingContractEntry.revenueLabel,
+          revenueAmount: matchingContractEntry.revenueAmount,
+          increasedRevenueAmount: matchingContractEntry.increasedRevenueAmount,
+          expectedIncreaseRevenueAmount: matchingContractEntry.expectedIncreaseRevenueAmount,
+        }
+      : nextPoint
+
+    updateWorkingPoints((current) => [...current, mergedPoint])
+    if (matchingContractEntry) {
+      setContractOnlyEntries((current) =>
+        current.filter((entry) => entry.id !== matchingContractEntry.id),
+      )
+    }
     setForm(EMPTY_FORM)
     setErrorMessage('')
   }
@@ -2721,9 +2871,18 @@ function App() {
       계약상태: getContractStatusLabel(point.contractStatus),
       계약만료일: formatContractDate(point.contractEndDate),
       적용일자: formatContractDate(point.contractApplyDate),
-      계약전단가: point.contractBeforePrice ?? '',
-      계약후단가: point.contractAfterPrice ?? '',
+      계약전단가: parseContractNumericValue(point.contractBeforePrice) ?? point.contractBeforePrice ?? '',
+      계약후단가: parseContractNumericValue(point.contractAfterPrice) ?? point.contractAfterPrice ?? '',
       인상률: point.contractIncreaseRate ?? '',
+      [contractRevenueLabel]: parseContractNumericValue(point.revenueAmount) ?? point.revenueAmount ?? '',
+      인상률반영매출:
+        parseContractNumericValue(point.increasedRevenueAmount) ??
+        point.increasedRevenueAmount ??
+        '',
+      예상인상매출:
+        parseContractNumericValue(point.expectedIncreaseRevenueAmount) ??
+        point.expectedIncreaseRevenueAmount ??
+        '',
     }))
 
     const worksheet = XLSX.utils.json_to_sheet(rows)
@@ -2769,6 +2928,7 @@ function App() {
         raw: true,
       })
 
+      const consumedContractEntryIds = new Set()
       const nextPoints = rows
         .slice(1)
         .map((row, index) => {
@@ -2790,9 +2950,28 @@ function App() {
         .filter(Boolean)
         .map((nextPoint) => {
           const existingPoint = points.find((point) => point.name === nextPoint.name)
+          const contractOnlyEntry = contractOnlyEntries.find((entry) => entry.name === nextPoint.name)
 
           if (!existingPoint) {
-            return nextPoint
+            if (!contractOnlyEntry) {
+              return nextPoint
+            }
+
+            consumedContractEntryIds.add(contractOnlyEntry.id)
+
+            return {
+              ...nextPoint,
+              contractStatus: contractOnlyEntry.contractStatus ?? '',
+              contractEndDate: contractOnlyEntry.contractEndDate ?? '',
+              contractApplyDate: contractOnlyEntry.contractApplyDate ?? '',
+              contractBeforePrice: contractOnlyEntry.contractBeforePrice ?? '',
+              contractAfterPrice: contractOnlyEntry.contractAfterPrice ?? '',
+              contractIncreaseRate: contractOnlyEntry.contractIncreaseRate ?? '',
+              revenueLabel: contractOnlyEntry.revenueLabel ?? '',
+              revenueAmount: contractOnlyEntry.revenueAmount ?? '',
+              increasedRevenueAmount: contractOnlyEntry.increasedRevenueAmount ?? '',
+              expectedIncreaseRevenueAmount: contractOnlyEntry.expectedIncreaseRevenueAmount ?? '',
+            }
           }
 
           return {
@@ -2803,6 +2982,10 @@ function App() {
             contractBeforePrice: existingPoint.contractBeforePrice ?? '',
             contractAfterPrice: existingPoint.contractAfterPrice ?? '',
             contractIncreaseRate: existingPoint.contractIncreaseRate ?? '',
+            revenueLabel: existingPoint.revenueLabel ?? '',
+            revenueAmount: existingPoint.revenueAmount ?? '',
+            increasedRevenueAmount: existingPoint.increasedRevenueAmount ?? '',
+            expectedIncreaseRevenueAmount: existingPoint.expectedIncreaseRevenueAmount ?? '',
             isContractEnding: existingPoint.isContractEnding === true,
           }
         })
@@ -2813,7 +2996,11 @@ function App() {
 
       setActiveSavedGraphId(null)
       setPoints(nextPoints)
+      setContractOnlyEntries((current) =>
+        current.filter((entry) => !consumedContractEntryIds.has(entry.id)),
+      )
       setErrorMessage('')
+      setContractUploadSkippedRows([])
     } catch {
       setErrorMessage('엑셀 업로드에 실패했습니다.')
     } finally {
@@ -2846,90 +3033,188 @@ function App() {
       let fuzzyMatchedCount = 0
       let createdNewCount = 0
       let skippedCount = 0
+      const skippedRows = []
+      const revenueLabelColumn =
+        Object.keys(rows[0] ?? {}).find((key) => /(\d+)월\s*매출/.test(String(key).trim())) ?? ''
 
       const nextPoints = points.map((point) => ({ ...point }))
+      const nextContractOnlyEntries = contractOnlyEntries.map((entry) => ({ ...entry }))
 
       rows.forEach((row) => {
-        const rawCustomerName = String(row['호텔명'] ?? row['고객사명'] ?? '').trim()
-        const customerName = sanitizeContractValue(row['호텔명'] ?? row['고객사명'])
-        const rawStatus = String(row['상태'] || '').trim()
-        const isNewContract = rawStatus.includes('신규')
-        const contractStatus = isNewContract ? 'new' : normalizeContractStatus(rawStatus)
+        try {
+          const rawCustomerName = String(row['호텔명'] ?? row['고객사명'] ?? '').trim()
+          const customerName = sanitizeContractValue(row['호텔명'] ?? row['고객사명'])
+          const rawStatus = String(row['상태'] || '').trim()
+          const isNewContract = rawStatus.includes('신규')
+          const contractStatus = isNewContract ? 'new' : normalizeContractStatus(rawStatus)
 
-        console.log('[contract-upload] row status', {
-          customerName: rawCustomerName,
-          rawStatus,
-          isNewContract,
-          normalizedStatus: contractStatus,
-        })
+          console.log('[contract-upload] row status', {
+            customerName: rawCustomerName,
+            rawStatus,
+            isNewContract,
+            normalizedStatus: contractStatus,
+          })
 
-        if (!rawCustomerName) {
-          skippedCount += 1
-          return
-        }
+          if (!rawCustomerName) {
+            skippedCount += 1
+            skippedRows.push({ name: '(호텔명 없음)', reason: '호텔명 없음' })
+            return
+          }
 
-        if (isNewContract || contractStatus === 'new') {
-          const exactPointIndex = nextPoints.findIndex((point) => point.name === rawCustomerName)
+          if (!rawStatus) {
+            skippedCount += 1
+            skippedRows.push({ name: rawCustomerName, reason: '상태값 없음' })
+            return
+          }
 
-          if (exactPointIndex >= 0) {
-            nextPoints[exactPointIndex] = {
-              ...nextPoints[exactPointIndex],
+          if (!contractStatus) {
+            skippedCount += 1
+            skippedRows.push({ name: rawCustomerName, reason: '상태값 인식 불가' })
+            return
+          }
+
+          if (isNewContract || contractStatus === 'new') {
+            const exactPointIndex = nextPoints.findIndex((point) => point.name === rawCustomerName)
+            const contractPayload = {
               contractStatus,
               contractEndDate: formatContractDate(row['계약만료일']),
               contractApplyDate: formatContractDate(row['적용일자']),
               contractBeforePrice: row['계약전 단가'] ?? '',
               contractAfterPrice: row['계약후 단가'] ?? '',
               contractIncreaseRate: sanitizeContractValue(row['인상률']),
+              revenueLabel: revenueLabelColumn || '',
+              revenueAmount:
+                revenueLabelColumn
+                  ? parseContractNumericValue(row[revenueLabelColumn]) ?? row[revenueLabelColumn] ?? ''
+                  : '',
+              increasedRevenueAmount:
+                parseContractNumericValue(row['인상률 반영 매출']) ?? row['인상률 반영 매출'] ?? '',
+              expectedIncreaseRevenueAmount:
+                parseContractNumericValue(row['예상 인상 매출']) ?? row['예상 인상 매출'] ?? '',
             }
-            exactMatchedCount += 1
-            console.log('[contract-upload] new-contract exact update', {
+
+            if (exactPointIndex >= 0) {
+              nextPoints[exactPointIndex] = {
+                ...nextPoints[exactPointIndex],
+                ...contractPayload,
+              }
+              const contractOnlyIndex = nextContractOnlyEntries.findIndex(
+                (entry) => entry.name === rawCustomerName,
+              )
+              if (contractOnlyIndex >= 0) {
+                nextContractOnlyEntries.splice(contractOnlyIndex, 1)
+              }
+              exactMatchedCount += 1
+              console.log('[contract-upload] new-contract exact update', {
+                customerName: rawCustomerName,
+              })
+              return
+            }
+
+            const contractOnlyIndex = nextContractOnlyEntries.findIndex(
+              (entry) => entry.name === rawCustomerName,
+            )
+            const nextEntry = {
+              id: contractOnlyIndex >= 0 ? nextContractOnlyEntries[contractOnlyIndex].id : crypto.randomUUID(),
+              name: rawCustomerName,
+              ...contractPayload,
+              hasPoint: false,
+            }
+
+            if (contractOnlyIndex >= 0) {
+              nextContractOnlyEntries[contractOnlyIndex] = nextEntry
+            } else {
+              nextContractOnlyEntries.push(nextEntry)
+            }
+            createdNewCount += 1
+            console.log('[contract-upload] new-contract stored without point', {
               customerName: rawCustomerName,
             })
             return
           }
 
-          skippedCount += 1
-          console.log('[contract-upload] new-contract skipped: no existing point', {
+          const matched = findBestMatchingPoint(customerName, nextPoints)
+          const contractPayload = {
+            contractStatus,
+            contractEndDate: formatContractDate(row['계약만료일']),
+            contractApplyDate: formatContractDate(row['적용일자']),
+            contractBeforePrice: row['계약전 단가'] ?? '',
+            contractAfterPrice: row['계약후 단가'] ?? '',
+            contractIncreaseRate: sanitizeContractValue(row['인상률']),
+            revenueLabel: revenueLabelColumn || '',
+            revenueAmount:
+              revenueLabelColumn
+                ? parseContractNumericValue(row[revenueLabelColumn]) ?? row[revenueLabelColumn] ?? ''
+                : '',
+            increasedRevenueAmount:
+              parseContractNumericValue(row['인상률 반영 매출']) ?? row['인상률 반영 매출'] ?? '',
+            expectedIncreaseRevenueAmount:
+              parseContractNumericValue(row['예상 인상 매출']) ?? row['예상 인상 매출'] ?? '',
+          }
+
+          if (matched) {
+            const pointIndex = nextPoints.findIndex((point) => point.id === matched.pointId)
+
+            if (pointIndex >= 0) {
+              nextPoints[pointIndex] = {
+                ...nextPoints[pointIndex],
+                ...contractPayload,
+              }
+              const contractOnlyIndex = nextContractOnlyEntries.findIndex(
+                (entry) => entry.name === rawCustomerName,
+              )
+              if (contractOnlyIndex >= 0) {
+                nextContractOnlyEntries.splice(contractOnlyIndex, 1)
+              }
+
+              if (matched.matchType === 'exact') {
+                exactMatchedCount += 1
+              } else {
+                fuzzyMatchedCount += 1
+              }
+              return
+            }
+          }
+
+          const contractOnlyIndex = nextContractOnlyEntries.findIndex(
+            (entry) => entry.name === rawCustomerName,
+          )
+          const nextEntry = {
+            id: contractOnlyIndex >= 0 ? nextContractOnlyEntries[contractOnlyIndex].id : crypto.randomUUID(),
+            name: rawCustomerName,
+            ...contractPayload,
+            hasPoint: false,
+          }
+
+          if (contractOnlyIndex >= 0) {
+            nextContractOnlyEntries[contractOnlyIndex] = nextEntry
+          } else {
+            nextContractOnlyEntries.push(nextEntry)
+          }
+          console.log('[contract-upload] stored without point', {
             customerName: rawCustomerName,
           })
-          return
+        } catch (error) {
+          skippedCount += 1
+          skippedRows.push({
+            name: String(row['호텔명'] ?? row['고객사명'] ?? '').trim() || '(이름 없음)',
+            reason: '기타 오류',
+          })
+          console.error('[contract-upload] row error', error)
         }
-
-        const matched = findBestMatchingPoint(customerName, nextPoints)
-
-        if (matched) {
-          const pointIndex = nextPoints.findIndex((point) => point.id === matched.pointId)
-
-          if (pointIndex >= 0) {
-            nextPoints[pointIndex] = {
-              ...nextPoints[pointIndex],
-              contractStatus,
-              contractEndDate: formatContractDate(row['계약만료일']),
-              contractApplyDate: formatContractDate(row['적용일자']),
-              contractBeforePrice: row['계약전 단가'] ?? '',
-              contractAfterPrice: row['계약후 단가'] ?? '',
-              contractIncreaseRate: sanitizeContractValue(row['인상률']),
-            }
-
-            if (matched.matchType === 'exact') {
-              exactMatchedCount += 1
-            } else {
-              fuzzyMatchedCount += 1
-            }
-            return
-          }
-        }
-
-        skippedCount += 1
       })
 
-      const nextState = buildGraphState(nextPoints, connections)
+      const nextState = buildGraphState(nextPoints, connections, nextContractOnlyEntries)
       const contractHotels = nextState.points.filter((point) => point.contractStatus)
 
       setActiveSavedGraphId(null)
       setPoints(nextState.points)
+      setContractOnlyEntries(nextState.contractOnlyEntries)
+      setContractUploadSkippedRows(skippedRows)
       console.log('[DEBUG] contract result', contractHotels)
+      console.log('[DEBUG] contract only result', nextState.contractOnlyEntries)
       console.log('[contract-upload] contract hotels', contractHotels)
+      console.log('[contract-upload] skipped rows', skippedRows)
       console.log('[contract-upload] summary', {
         totalRows: rows.length,
         exactMatchedCount,
@@ -2942,6 +3227,7 @@ function App() {
         `계약 자료 업로드 완료 (정확 매칭 ${exactMatchedCount}건, 유사도 매칭 ${fuzzyMatchedCount}건, 신규 계약 추가 ${createdNewCount}건, 제외 ${skippedCount}건)`,
       )
     } catch {
+      setContractUploadSkippedRows([])
       setErrorMessage('계약 자료 업로드에 실패했습니다.')
     } finally {
       event.target.value = ''
@@ -3422,6 +3708,18 @@ function App() {
                 <input type="file" accept=".xlsx,.xls" onChange={handleContractFileUpload} />
               </label>
               {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
+              {contractUploadSkippedRows.length ? (
+                <div className="upload-debug-panel">
+                  <strong>[제외된 데이터]</strong>
+                  <ul className="upload-debug-list">
+                    {contractUploadSkippedRows.map((item, index) => (
+                      <li key={`${item.name}-${item.reason}-${index}`}>
+                        {item.name} ({item.reason})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </form>
 
             <section className="point-list">
@@ -3808,6 +4106,9 @@ function App() {
                           <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractBeforePrice')}>계약전 단가</button></th>
                           <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractAfterPrice')}>계약후 단가</button></th>
                           <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractIncreaseRate')}>인상률</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('revenueAmount')}>{contractRevenueLabel}</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('increasedRevenueAmount')}>인상률 반영 매출</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('expectedIncreaseRevenueAmount')}>예상 인상 매출</button></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3817,9 +4118,12 @@ function App() {
                             <td>{getContractStatusLabel(point.contractStatus)}</td>
                             <td>{formatContractDate(point.contractEndDate) || '-'}</td>
                             <td>{formatContractDate(point.contractApplyDate) || '-'}</td>
-                            <td>{point.contractBeforePrice || '-'}</td>
-                            <td>{point.contractAfterPrice || '-'}</td>
+                            <td>{formatCurrency(point.contractBeforePrice) || '-'}</td>
+                            <td>{formatCurrency(point.contractAfterPrice) || '-'}</td>
                             <td>{point.contractIncreaseRate || '-'}</td>
+                            <td>{formatCurrency(point.revenueAmount) || '-'}</td>
+                            <td>{formatCurrency(point.increasedRevenueAmount) || '-'}</td>
+                            <td>{formatCurrency(point.expectedIncreaseRevenueAmount) || '-'}</td>
                           </tr>
                         ))}
                       </tbody>
