@@ -1879,21 +1879,6 @@ function App() {
     [visibleDisplayPoints, pointScreenMap],
   )
 
-  const axisLabelPositions = useMemo(() => {
-    if (!chartSize.width || !chartSize.height) {
-      return null
-    }
-
-    const metrics = buildPlotMetrics(chartSize)
-
-    return {
-      topX: metrics.toX(PRIMARY_AXIS_X) + (axisLabelOffsets.top?.x ?? 0),
-      topY: Math.max(8, CHART_MARGIN.top - 20) + (axisLabelOffsets.top?.y ?? 0),
-      leftX: Math.max(10, CHART_MARGIN.left - 16) + (axisLabelOffsets.left?.x ?? 0),
-      leftY: metrics.toY(PRIMARY_AXIS_Y) + (axisLabelOffsets.left?.y ?? 0),
-    }
-  }, [chartSize, axisLabelOffsets])
-
   const visibleConnections = useMemo(() => {
     const strictlyVisibleConnections = connections.filter((connection) => {
       if (!isConnectionVisible(connection)) {
@@ -2635,14 +2620,10 @@ function App() {
       return
     }
 
-    const clampedValue = key === 'x'
-      ? clamp(nextValue, -7, 7)
-      : clamp(nextValue, 0, 36)
-
     setErrorMessage('')
     setDraftPoints((current) =>
       current.map((point) =>
-        point.id === id ? { ...point, [key]: clampedValue } : point,
+        point.id === id ? { ...point, [key]: nextValue } : point,
       ),
     )
   }
@@ -3447,28 +3428,6 @@ function App() {
               </section>
             ) : null}
 
-            {axisLabelPositions ? (
-              <>
-                <div
-                  className="chart-axis-label chart-axis-label-top"
-                  style={{
-                    left: `${axisLabelPositions.topX}px`,
-                    top: `${axisLabelPositions.topY}px`,
-                  }}
-                >
-                  운영 난이도
-                </div>
-                <div
-                  className="chart-axis-label chart-axis-label-left"
-                  style={{
-                    left: `${axisLabelPositions.leftX}px`,
-                    top: `${axisLabelPositions.leftY}px`,
-                  }}
-                >
-                  단가 점수
-                </div>
-              </>
-            ) : null}
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={CHART_MARGIN}>
                 <XAxis
@@ -3812,8 +3771,6 @@ function App() {
                                 <span>단가 :</span>
                                 <input
                                   type="number"
-                                  min="-7"
-                                  max="7"
                                   step="0.1"
                                   value={point.x}
                                   onChange={(event) =>
@@ -3825,8 +3782,6 @@ function App() {
                                 <span>난이도 :</span>
                                 <input
                                   type="number"
-                                  min="0"
-                                  max="36"
                                   step="0.1"
                                   value={point.y}
                                   onChange={(event) =>

@@ -377,30 +377,6 @@
   color: #14213d;
 }
 
-.chart-axis-label {
-  position: absolute;
-  z-index: 4;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: rgba(20, 33, 61, 0.7);
-  pointer-events: none;
-  user-select: none;
-  cursor: default;
-}
-
-.chart-axis-label-top {
-  transform: translate(-50%, -50%) rotate(90deg);
-  transform-origin: center center;
-}
-
-.chart-axis-label-left {
-  transform: translateY(-50%);
-  transform-origin: center center;
-}
-
-
-
-
 .chart-wrap svg,
 .chart-wrap .recharts-surface,
 .chart-wrap .recharts-wrapper {
