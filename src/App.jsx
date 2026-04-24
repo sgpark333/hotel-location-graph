@@ -3589,7 +3589,7 @@ function App() {
                       마지막 복구
                     </button>
                   </div>
-                  <button type="button" className="secondary-button" onClick={saveCurrentState}>
+                  <button type="button" className="secondary-button" onClick={() => saveCurrentState()}>
                     현재 상태 저장
                   </button>
                 </div>
