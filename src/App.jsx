@@ -109,6 +109,10 @@ const ANALYZE_SECTION_OPTIONS = {
   quadrant: 'quadrant',
   contract: 'contract',
 }
+const CONTRACT_SORT_DIRECTIONS = {
+  asc: 'asc',
+  desc: 'desc',
+}
 const CONTRACT_FILTER_OPTIONS = [
   { id: 'all', label: '전체', value: 'all' },
   { id: 'renewal', label: '재계약', value: 'renewal' },
@@ -325,6 +329,32 @@ function getContractStatusLabel(value) {
     default:
       return ''
   }
+}
+
+function parseContractNumericValue(value) {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+
+  const normalized = sanitizeContractValue(value).replace(/,/g, '').replace(/%/g, '')
+  const parsed = Number(normalized)
+
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function parseContractDateValue(value) {
+  const formatted = formatContractDate(value)
+
+  if (!formatted) {
+    return null
+  }
+
+  const timestamp = new Date(formatted).getTime()
+  return Number.isFinite(timestamp) ? timestamp : null
 }
 
 function createDefaultGraphState() {
@@ -1468,6 +1498,8 @@ function App() {
   const [activeTab, setActiveTab] = useState(TAB_OPTIONS.dashboard)
   const [analyzeSection, setAnalyzeSection] = useState(ANALYZE_SECTION_OPTIONS.quadrant)
   const [contractStatusFilter, setContractStatusFilter] = useState('all')
+  const [contractSortKey, setContractSortKey] = useState('')
+  const [contractSortDirection, setContractSortDirection] = useState(CONTRACT_SORT_DIRECTIONS.asc)
   const [isRemoteHydrating, setIsRemoteHydrating] = useState(true)
   const [hasRemoteUpdate, setHasRemoteUpdate] = useState(false)
 
@@ -2011,6 +2043,58 @@ function App() {
       ),
     [contractAnalyzePoints, contractStatusFilter],
   )
+
+  const sortedContractAnalyzePoints = useMemo(() => {
+    const items = [...filteredContractAnalyzePoints]
+
+    if (!contractSortKey) {
+      return items
+    }
+
+    const collator = new Intl.Collator('ko')
+    const direction = contractSortDirection === CONTRACT_SORT_DIRECTIONS.desc ? -1 : 1
+
+    items.sort((left, right) => {
+      let compareResult = 0
+
+      if (contractSortKey === 'name') {
+        compareResult = collator.compare(left.name, right.name)
+      } else if (contractSortKey === 'contractStatus') {
+        compareResult = collator.compare(
+          getContractStatusLabel(left.contractStatus),
+          getContractStatusLabel(right.contractStatus),
+        )
+      } else if (contractSortKey === 'contractEndDate') {
+        compareResult =
+          (parseContractDateValue(left.contractEndDate) ?? Number.POSITIVE_INFINITY) -
+          (parseContractDateValue(right.contractEndDate) ?? Number.POSITIVE_INFINITY)
+      } else if (contractSortKey === 'contractApplyDate') {
+        compareResult =
+          (parseContractDateValue(left.contractApplyDate) ?? Number.POSITIVE_INFINITY) -
+          (parseContractDateValue(right.contractApplyDate) ?? Number.POSITIVE_INFINITY)
+      } else if (contractSortKey === 'contractBeforePrice') {
+        compareResult =
+          (parseContractNumericValue(left.contractBeforePrice) ?? Number.POSITIVE_INFINITY) -
+          (parseContractNumericValue(right.contractBeforePrice) ?? Number.POSITIVE_INFINITY)
+      } else if (contractSortKey === 'contractAfterPrice') {
+        compareResult =
+          (parseContractNumericValue(left.contractAfterPrice) ?? Number.POSITIVE_INFINITY) -
+          (parseContractNumericValue(right.contractAfterPrice) ?? Number.POSITIVE_INFINITY)
+      } else if (contractSortKey === 'contractIncreaseRate') {
+        compareResult =
+          (parseContractNumericValue(left.contractIncreaseRate) ?? Number.POSITIVE_INFINITY) -
+          (parseContractNumericValue(right.contractIncreaseRate) ?? Number.POSITIVE_INFINITY)
+      }
+
+      if (compareResult === 0) {
+        compareResult = collator.compare(left.name, right.name)
+      }
+
+      return compareResult * direction
+    })
+
+    return items
+  }, [filteredContractAnalyzePoints, contractSortKey, contractSortDirection])
 
   const contractAnalyzeSummary = useMemo(
     () => ({
@@ -2624,7 +2708,7 @@ function App() {
   }
 
   const handleDownloadContractExcel = () => {
-    if (!filteredContractAnalyzePoints.length) {
+    if (!sortedContractAnalyzePoints.length) {
       setErrorMessage('다운로드할 계약 자료가 없습니다.')
       return
     }
@@ -2632,7 +2716,7 @@ function App() {
     const filterLabel =
       CONTRACT_FILTER_OPTIONS.find((option) => option.value === contractStatusFilter)?.label ?? '전체'
 
-    const rows = filteredContractAnalyzePoints.map((point) => ({
+    const rows = sortedContractAnalyzePoints.map((point) => ({
       호텔명: point.name,
       계약상태: getContractStatusLabel(point.contractStatus),
       계약만료일: formatContractDate(point.contractEndDate),
@@ -2648,6 +2732,20 @@ function App() {
     XLSX.utils.book_append_sheet(workbook, worksheet, '계약현황')
     XLSX.writeFile(workbook, `계약현황_${filterLabel.replace(/\s+/g, '')}.xlsx`)
     setErrorMessage('')
+  }
+
+  const handleContractSort = (key) => {
+    if (contractSortKey === key) {
+      setContractSortDirection((current) =>
+        current === CONTRACT_SORT_DIRECTIONS.asc
+          ? CONTRACT_SORT_DIRECTIONS.desc
+          : CONTRACT_SORT_DIRECTIONS.asc,
+      )
+      return
+    }
+
+    setContractSortKey(key)
+    setContractSortDirection(CONTRACT_SORT_DIRECTIONS.asc)
   }
 
   const handleFileUpload = async (event) => {
@@ -3703,17 +3801,17 @@ function App() {
                     <table className="contract-status-table">
                       <thead>
                         <tr>
-                          <th>호텔명</th>
-                          <th>계약 상태</th>
-                          <th>계약만료일</th>
-                          <th>적용일자</th>
-                          <th>계약전 단가</th>
-                          <th>계약후 단가</th>
-                          <th>인상률</th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('name')}>호텔명</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractStatus')}>계약 상태</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractEndDate')}>계약만료일</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractApplyDate')}>적용일자</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractBeforePrice')}>계약전 단가</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractAfterPrice')}>계약후 단가</button></th>
+                          <th><button type="button" className="contract-sort-button" onClick={() => handleContractSort('contractIncreaseRate')}>인상률</button></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredContractAnalyzePoints.map((point) => (
+                        {sortedContractAnalyzePoints.map((point) => (
                           <tr key={`contract-${point.id}`}>
                             <td>{point.name}</td>
                             <td>{getContractStatusLabel(point.contractStatus)}</td>

@@ -162,6 +162,16 @@
   color: #14213d;
 }
 
+.contract-sort-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
 .contract-status-table tbody tr:last-child td {
   border-bottom: 0;
 }
