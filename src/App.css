@@ -465,7 +465,7 @@
 }
 
 .arrow-list {
-  max-height: 110px;
+  max-height: 240px;
   overflow: auto;
 }
 
@@ -735,6 +735,13 @@
   min-width: 0;
 }
 
+.point-list-title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .point-list-search-wrap {
   display: flex;
   justify-content: center;
@@ -857,6 +864,38 @@
 .point-meta strong,
 .point-meta span {
   display: block;
+}
+
+.point-meta-edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.point-meta-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #52616b;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.point-meta-input span {
+  display: inline;
+  color: inherit;
+}
+
+.point-meta-input input {
+  width: 62px;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font: inherit;
+  line-height: 1.2;
+  color: #14213d;
+  background: #fff;
 }
 
 .point-meta span,

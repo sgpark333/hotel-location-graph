@@ -1200,6 +1200,8 @@ function App() {
   const activeLabelRef = useRef(null)
   const lastAppliedRemoteUpdatedAtRef = useRef(null)
   const [points, setPoints] = useState(() => initialGraphStateRef.current.points)
+  const [editMode, setEditMode] = useState(false)
+  const [draftPoints, setDraftPoints] = useState([])
   const [connections, setConnections] = useState(() => initialGraphStateRef.current.connections)
   const [form, setForm] = useState(EMPTY_FORM)
   const [arrowForm, setArrowForm] = useState(EMPTY_ARROW_FORM)
@@ -1248,6 +1250,8 @@ function App() {
   const [activeTab, setActiveTab] = useState(TAB_OPTIONS.dashboard)
   const [isRemoteHydrating, setIsRemoteHydrating] = useState(true)
   const [hasRemoteUpdate, setHasRemoteUpdate] = useState(false)
+
+  const graphPoints = editMode ? draftPoints : points
 
   const setActiveSavedGraphId = () => {}
   const updateLabelDebug = (message) => {
@@ -1381,7 +1385,7 @@ function App() {
 
   useEffect(() => {
     setRenderedPointMap({})
-  }, [points])
+  }, [graphPoints])
 
   useEffect(() => {
     setLabelOffsets((current) => {
@@ -1403,8 +1407,8 @@ function App() {
   )
 
   const displayColorMap = useMemo(
-    () => buildDisplayColorMap(points, connections),
-    [points, connections],
+    () => buildDisplayColorMap(graphPoints, connections),
+    [graphPoints, connections],
   )
 
   const movingQuadrantConnectionIds = useMemo(
@@ -1412,8 +1416,8 @@ function App() {
       new Set(
         connections
           .filter((connection) => {
-            const fromPoint = points.find((point) => point.id === connection.fromId)
-            const toPoint = points.find((point) => point.id === connection.toId)
+            const fromPoint = graphPoints.find((point) => point.id === connection.fromId)
+            const toPoint = graphPoints.find((point) => point.id === connection.toId)
 
             if (!fromPoint || !toPoint) {
               return false
@@ -1423,7 +1427,7 @@ function App() {
           })
           .map((connection) => connection.id),
       ),
-    [connections, points],
+    [connections, graphPoints],
   )
 
   const movingQuadrantPointIds = useMemo(
@@ -1438,7 +1442,7 @@ function App() {
 
   const visiblePoints = useMemo(
     () =>
-      points.filter((point) => {
+      graphPoints.filter((point) => {
         if (showOnlyContractEnding && point.isContractEnding !== true) {
           return false
         }
@@ -1457,7 +1461,7 @@ function App() {
         )
       }),
     [
-      points,
+      graphPoints,
       quadrantVisibility,
       showConnectedOnly,
       showMovingQuadrantOnly,
@@ -1568,8 +1572,8 @@ function App() {
     () =>
       connections
         .map((connection) => {
-          const fromPoint = points.find((point) => point.id === connection.fromId)
-          const toPoint = points.find((point) => point.id === connection.toId)
+          const fromPoint = graphPoints.find((point) => point.id === connection.fromId)
+          const toPoint = graphPoints.find((point) => point.id === connection.toId)
 
           if (!fromPoint || !toPoint) {
             return null
@@ -1582,7 +1586,7 @@ function App() {
           }
         })
         .filter(Boolean),
-    [connections, points],
+    [connections, graphPoints],
   )
 
   const sourcePointIds = useMemo(
@@ -1592,7 +1596,7 @@ function App() {
 
   const sortedPoints = useMemo(() => {
     const collator = new Intl.Collator('ko')
-    const sorted = [...points]
+    const sorted = [...graphPoints]
 
     if (pointSortOrder === SORT_OPTIONS.nameAsc || pointSortOrder === SORT_OPTIONS.nameDesc) {
       const direction = pointSortOrder === SORT_OPTIONS.nameDesc ? -1 : 1
@@ -1615,7 +1619,7 @@ function App() {
 
       return collator.compare(left.name, right.name)
     })
-  }, [pointSortOrder, points, showSecondaryQuadrants])
+  }, [pointSortOrder, graphPoints, showSecondaryQuadrants])
 
   const displayPoints = useMemo(() => {
     const normalizedQuery = pointSearchQuery.replace(/\s+/g, '').trim().toLocaleLowerCase('ko')
@@ -1726,13 +1730,13 @@ function App() {
   const analyzeQuadrantGroups = useMemo(
     () =>
       getAnalyzeQuadrantGroups(
-        points.map((point) => ({
+        graphPoints.map((point) => ({
           ...point,
           displayColor: displayColorMap[point.id] ?? point.color,
         })),
         showSecondaryQuadrants,
       ),
-    [points, displayColorMap, showSecondaryQuadrants],
+    [graphPoints, displayColorMap, showSecondaryQuadrants],
   )
 
   const analyzeHighlightIds = useMemo(
@@ -1778,10 +1782,10 @@ function App() {
     }
   }
 
-  const getCurrentGraphState = () =>
-    cloneGraphState({
-      points,
-      connections,
+  const buildGraphState = (nextPoints = points, nextConnections = connections) =>
+    cloneGraphState(normalizeGraphState({
+      points: nextPoints,
+      connections: nextConnections,
       labelOffsets,
       axisLabelOffsets,
       quadrantVisibility,
@@ -1805,14 +1809,18 @@ function App() {
         subQuadrantX: SUB_QUADRANT_X,
         subQuadrantY: SUB_QUADRANT_Y,
       },
-      groupColorMap: buildDisplayColorMap(points, connections),
-    })
+      groupColorMap: buildDisplayColorMap(nextPoints, nextConnections),
+    }))
+
+  const getCurrentGraphState = () => buildGraphState()
 
   const applyGraphState = (graphState, options = {}) => {
     const normalized = normalizeGraphState(graphState)
 
     activeLabelRef.current = null
     dragStateRef.current = null
+    setEditMode(false)
+    setDraftPoints([])
     setPoints(normalized.points)
     setConnections(normalized.connections)
     setLabelOffsets(normalized.labelOffsets)
@@ -1994,8 +2002,8 @@ function App() {
     })
   }
 
-  const saveCurrentState = async () => {
-    const nextState = getCurrentGraphState()
+  const saveCurrentState = async (stateOverride = null) => {
+    const nextState = cloneGraphState(stateOverride ?? getCurrentGraphState())
     const nextUpdatedAt = new Date().toISOString()
 
     setStateHistory((current) => {
@@ -2111,6 +2119,70 @@ function App() {
     })
   }
 
+  const updateWorkingPoints = (updater) => {
+    setActiveSavedGraphId(null)
+
+    if (editMode) {
+      setDraftPoints((current) => updater(current))
+      return
+    }
+
+    setPoints((current) => updater(current))
+  }
+
+  const handleStartEdit = () => {
+    setDraftPoints(points.map((point) => ({ ...point })))
+    setEditMode(true)
+    setErrorMessage('')
+  }
+
+  const handleDraftPointChange = (id, key, rawValue) => {
+    const nextValue = Number(rawValue)
+
+    if (rawValue === '' || Number.isNaN(nextValue)) {
+      setErrorMessage('단가와 난이도는 숫자로 입력해 주세요.')
+      return
+    }
+
+    const clampedValue = key === 'x'
+      ? clamp(nextValue, -7, 7)
+      : clamp(nextValue, 0, 36)
+
+    setErrorMessage('')
+    setDraftPoints((current) =>
+      current.map((point) =>
+        point.id === id ? { ...point, [key]: clampedValue } : point,
+      ),
+    )
+  }
+
+  const handleCancelEdit = () => {
+    setDraftPoints([])
+    setEditMode(false)
+    setErrorMessage('')
+  }
+
+  const handleSaveEdit = async () => {
+    const hasInvalidPoint = draftPoints.some(
+      (point) =>
+        !Number.isFinite(Number(point.x)) ||
+        !Number.isFinite(Number(point.y)),
+    )
+
+    if (hasInvalidPoint) {
+      setErrorMessage('단가와 난이도는 비워둘 수 없습니다.')
+      return
+    }
+
+    const nextState = buildGraphState(draftPoints, connections)
+
+    setPoints(nextState.points)
+    setConnections(nextState.connections)
+    setDraftPoints([])
+    setEditMode(false)
+    await saveCurrentState(nextState)
+  }
+
   const handleSubmit = (event) => {
     event.preventDefault()
 
@@ -2118,7 +2190,7 @@ function App() {
       form.name.trim(),
       Number(form.x),
       Number(form.y),
-      DEFAULT_COLORS[points.length % DEFAULT_COLORS.length],
+      DEFAULT_COLORS[graphPoints.length % DEFAULT_COLORS.length],
     )
 
     if (!nextPoint.name || Number.isNaN(nextPoint.x) || Number.isNaN(nextPoint.y)) {
@@ -2126,34 +2198,29 @@ function App() {
       return
     }
 
-    setActiveSavedGraphId(null)
-    setPoints((current) => [...current, nextPoint])
+    updateWorkingPoints((current) => [...current, nextPoint])
     setForm(EMPTY_FORM)
     setErrorMessage('')
   }
 
   const handleDeletePoint = (id) => {
-    setActiveSavedGraphId(null)
-    setPoints((current) => current.filter((point) => point.id !== id))
+    updateWorkingPoints((current) => current.filter((point) => point.id !== id))
   }
 
   const handlePointColorChange = (id, color) => {
-    setActiveSavedGraphId(null)
-    setPoints((current) =>
+    updateWorkingPoints((current) =>
       current.map((point) => (point.id === id ? { ...point, color } : point)),
     )
   }
 
   const handlePointVisibilityChange = (id, visible) => {
-    setActiveSavedGraphId(null)
-    setPoints((current) =>
+    updateWorkingPoints((current) =>
       current.map((point) => (point.id === id ? { ...point, visible } : point)),
     )
   }
 
   const handleContractEndingChange = (id, checked) => {
-    setActiveSavedGraphId(null)
-    setPoints((current) =>
+    updateWorkingPoints((current) =>
       current.map((point) =>
         point.id === id ? { ...point, isContractEnding: checked } : point,
       ),
@@ -2162,8 +2229,7 @@ function App() {
 
   const handleVisiblePointsVisibility = (visible) => {
     const displayPointIds = new Set(displayPoints.map((point) => point.id))
-    setActiveSavedGraphId(null)
-    setPoints((current) =>
+    updateWorkingPoints((current) =>
       current.map((point) =>
         displayPointIds.has(point.id) ? { ...point, visible } : point,
       ),
@@ -2753,13 +2819,41 @@ function App() {
               <div className="point-list-header">
                 <div className="point-list-title-group">
                   <span>호텔 리스트</span>
-                  <button
-                    type="button"
-                    className="point-list-bulk-button"
-                    onClick={handleToggleVisiblePointsVisibility}
-                  >
-                    전체 선택/해제
-                  </button>
+                  <div className="point-list-title-actions">
+                    <button
+                      type="button"
+                      className="point-list-bulk-button"
+                      onClick={handleToggleVisiblePointsVisibility}
+                    >
+                      전체 선택/해제
+                    </button>
+                    {editMode ? (
+                      <>
+                        <button
+                          type="button"
+                          className="point-list-bulk-button"
+                          onClick={handleSaveEdit}
+                        >
+                          저장
+                        </button>
+                        <button
+                          type="button"
+                          className="point-list-bulk-button"
+                          onClick={handleCancelEdit}
+                        >
+                          취소
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="point-list-bulk-button"
+                        onClick={handleStartEdit}
+                      >
+                        점수 수정
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="point-list-search-wrap">
                   <input
@@ -2805,9 +2899,40 @@ function App() {
                             <strong>{point.name}</strong>
                           </div>
                           <span>{getPointLocationLabel(point, showSecondaryQuadrants)}</span>
-                          <span>
-                            단가 : {formatPointMetric(point.x)} / 난이도 : {formatPointMetric(point.y)}
-                          </span>
+                          {editMode ? (
+                            <div className="point-meta-edit-row">
+                              <label className="point-meta-input">
+                                <span>단가 :</span>
+                                <input
+                                  type="number"
+                                  min="-7"
+                                  max="7"
+                                  step="0.1"
+                                  value={point.x}
+                                  onChange={(event) =>
+                                    handleDraftPointChange(point.id, 'x', event.target.value)
+                                  }
+                                />
+                              </label>
+                              <label className="point-meta-input">
+                                <span>난이도 :</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="36"
+                                  step="0.1"
+                                  value={point.y}
+                                  onChange={(event) =>
+                                    handleDraftPointChange(point.id, 'y', event.target.value)
+                                  }
+                                />
+                              </label>
+                            </div>
+                          ) : (
+                            <span>
+                              단가 : {formatPointMetric(point.x)} / 난이도 : {formatPointMetric(point.y)}
+                            </span>
+                          )}
                         </div>
                         <div className="point-actions-group">
                           <div className="point-actions">
@@ -2874,7 +2999,7 @@ function App() {
                   <label>
                     시작점
                     <input
-                      value={points.find((point) => point.id === arrowForm.fromId)?.name ?? ''}
+                      value={graphPoints.find((point) => point.id === arrowForm.fromId)?.name ?? ''}
                       readOnly
                       placeholder="호텔 리스트에서 시작점 선택"
                     />
@@ -2883,7 +3008,7 @@ function App() {
                   <label>
                     끝점
                     <input
-                      value={points.find((point) => point.id === arrowForm.toId)?.name ?? ''}
+                      value={graphPoints.find((point) => point.id === arrowForm.toId)?.name ?? ''}
                       readOnly
                       placeholder="호텔 리스트에서 끝점 선택"
                     />
@@ -2916,17 +3041,14 @@ function App() {
                           <input
                             type="checkbox"
                             checked={(arrow.arrowStatus ?? 'discussing') === 'confirmed'}
-                            onChange={() => handleArrowStatusChange(arrow.id, 'confirmed')}
+                            onChange={(event) =>
+                              handleArrowStatusChange(
+                                arrow.id,
+                                event.target.checked ? 'confirmed' : 'discussing',
+                              )
+                            }
                           />
                           <span>확정</span>
-                        </label>
-                        <label className="point-check">
-                          <input
-                            type="checkbox"
-                            checked={(arrow.arrowStatus ?? 'discussing') === 'discussing'}
-                            onChange={() => handleArrowStatusChange(arrow.id, 'discussing')}
-                          />
-                          <span>협의 중</span>
                         </label>
                         <button
                           type="button"
